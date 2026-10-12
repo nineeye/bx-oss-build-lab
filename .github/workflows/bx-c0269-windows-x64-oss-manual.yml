@@ -1,0 +1,135 @@
+name: BX C0269 Windows x64 OSS Pilot (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type I_APPROVE_C0269_PUBLIC_WINDOWS_PILOT (manual, public OSS only)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bx-c0269-win-x64-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native-windows-x64:
+    if: ${{ github.repository == 'nineeye/bx-oss-build-lab' && github.actor == 'nineeye' && inputs.approval == 'I_APPROVE_C0269_PUBLIC_WINDOWS_PILOT' }}
+    runs-on: windows-2025
+    timeout-minutes: 50
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Prepare isolated directories
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'bx-c0269'
+          New-Item -Type Directory -Force -Path "$root\out\logs","$root\src" | Out-Null
+      - name: Report Windows runner properties
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $env:RUNNER_TEMP 'bx-c0269\out\logs\00_runner.txt'
+          @(
+            "os=$([System.Environment]::OSVersion.VersionString)"
+            "arch=$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"
+            "processor_count=$([Environment]::ProcessorCount)"
+            "runner_name=$env:RUNNER_NAME"
+          ) | Set-Content -Encoding utf8 $out
+          if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') { throw 'NOT_X64_RUNNER' }
+      - name: Fetch official pinned ripgrep source
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'bx-c0269'
+          git -c submodule.recurse=false clone --depth 1 --branch 14.1.1 https://github.com/BurntSushi/ripgrep.git "$root\src\ripgrep" 2>&1 | Tee-Object -FilePath "$root\out\logs\01_fetch.log"
+          if ($LASTEXITCODE -ne 0) { throw 'SOURCE_CLONE_FAILED' }
+          $head = (git -C "$root\src\ripgrep" rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -cne '4649aa9700619f94cf9c66876e9549d83420e16c') { throw "SOURCE_COMMIT_MISMATCH:$head" }
+          Set-Content -Path "$root\out\source_commit.txt" -Encoding ascii -Value $head
+      - name: Setup pinned Rust MSVC compiler
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'bx-c0269'
+          rustup toolchain install 1.85.1-x86_64-pc-windows-msvc --profile minimal 2>&1 | Tee-Object -FilePath "$root\out\logs\02_toolchain.log"
+          if ($LASTEXITCODE -ne 0) { throw 'RUST_TOOLCHAIN_INSTALL_FAILED' }
+          rustup target add x86_64-pc-windows-msvc --toolchain 1.85.1-x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw 'RUST_TARGET_INSTALL_FAILED' }
+      - name: Compile actual x64 Windows EXE from pinned source
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'bx-c0269'
+          $env:CARGO_BUILD_JOBS = '4'
+          Push-Location "$root\src\ripgrep"
+          try {
+            cargo +1.85.1-x86_64-pc-windows-msvc build --release --locked --target x86_64-pc-windows-msvc 2>&1 | Tee-Object -FilePath "$root\out\logs\03_build.log"
+            if ($LASTEXITCODE -ne 0) { throw "RUST_COMPILE_FAILED:$LASTEXITCODE" }
+          } finally { Pop-Location }
+          $exe = "$root\src\ripgrep\target\x86_64-pc-windows-msvc\release\rg.exe"
+          if (!(Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'RIPGREP_EXE_MISSING' }
+          Copy-Item -LiteralPath $exe -Destination "$root\out\rg.exe"
+      - name: Verify native x64 EXE and Unicode path execution
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'bx-c0269'
+          $exe = "$root\out\rg.exe"
+          $b = [System.IO.File]::ReadAllBytes($exe)
+          if ($b.Length -lt 1024 -or $b[0] -ne 77 -or $b[1] -ne 90) { throw 'MZ_HEADER_INVALID' }
+          $offset = [BitConverter]::ToInt32($b,60)
+          if ($offset -lt 64 -or $offset -gt ($b.Length - 26)) { throw 'PE_OFFSET_INVALID' }
+          if ($b[$offset] -ne 80 -or $b[$offset+1] -ne 69 -or $b[$offset+2] -ne 0 -or $b[$offset+3] -ne 0) { throw 'PE_SIGNATURE_INVALID' }
+          if ([BitConverter]::ToUInt16($b,$offset+4) -ne 0x8664) { throw 'NOT_AMD64_PE' }
+          & $exe --version | Tee-Object -FilePath "$root\out\logs\04_version.log"
+          if ($LASTEXITCODE -ne 0) { throw 'EXE_VERSION_SMOKE_FAILED' }
+          $dir = Join-Path $env:RUNNER_TEMP 'Korean 한글 and spaces'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Set-Content -LiteralPath (Join-Path $dir 'input 한글.txt') -Encoding utf8 -Value 'BX_C0269_WIN_X64_MATCH'
+          & $exe -F BX_C0269_WIN_X64_MATCH (Join-Path $dir 'input 한글.txt') | Tee-Object -FilePath "$root\out\logs\05_unicode_search.log"
+          if ($LASTEXITCODE -ne 0) { throw 'UNICODE_PATH_SEARCH_FAILED' }
+          $count = & $exe -F -c BX_C0269_WIN_X64_MATCH (Join-Path $dir 'input 한글.txt')
+          if ($LASTEXITCODE -ne 0 -or "$count".Trim() -ne '1') { throw 'INCORRECT_SEARCH_RESULT' }
+      - name: Write run-bound metadata and SHA256 manifest
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'bx-c0269\out'
+          $head = (Get-Content "$root\source_commit.txt" -Raw).Trim()
+          @(
+            "controller_repo=$env:GITHUB_REPOSITORY"
+            "controller_commit=$env:GITHUB_SHA"
+            "workflow=.github/workflows/bx-c0269-windows-x64-oss-manual.yml"
+            "upstream=ripgrep"
+            "source_commit=$head"
+            "github_run_id=$env:GITHUB_RUN_ID"
+            "run_attempt=$env:GITHUB_RUN_ATTEMPT"
+            "platform=windows-x64"
+            "windows_pilot=YES"
+            "product_windows_certified=NO"
+            "customer_release=NOT_APPROVED"
+          ) | Set-Content -Encoding ascii "$root\BUILD_METADATA.txt"
+          $files = @(Get-ChildItem $root -File -Recurse | Where-Object Name -NE 'SHA256SUMS' | Sort-Object FullName)
+          $lines = @()
+          foreach ($item in $files) {
+            $rel = [IO.Path]::GetRelativePath($root,$item.FullName).Replace('\','/')
+            $hash = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            $lines += "$hash  ./$rel"
+          }
+          $lines | Set-Content -Encoding ascii "$root\SHA256SUMS"
+          if ($files.Count -lt 7 -or !(Test-Path "$root\rg.exe")) { throw 'MANIFEST_INCOMPLETE' }
+      - name: Upload actual binary and proof
+        if: success()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: bx-c0269-success-windows-x64-ripgrep-${{ github.run_id }}
+          path: ${{ runner.temp }}/bx-c0269/out/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Preserve failure logs (never certificate)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: bx-c0269-FAILED-NOT-APPROVED-${{ github.run_id }}
+          path: ${{ runner.temp }}/bx-c0269/out/logs/
+          if-no-files-found: warn
+          retention-days: 7
