@@ -17,13 +17,25 @@ concurrency:
 
 jobs:
   native-windows-x64:
-    if: ${{ github.repository == 'nineeye/bx-oss-build-lab' && github.actor == 'nineeye' && inputs.approval == 'I_APPROVE_C0269_PUBLIC_WINDOWS_PILOT' }}
+    if: ${{ github.repository == 'nineeye/bx-oss-build-lab' && github.actor == 'nineeye' }}
     runs-on: windows-2025
     timeout-minutes: 50
     defaults:
       run:
         shell: pwsh
     steps:
+      - name: Validate explicit approval and show actionable failure
+        env:
+          BX_APPROVAL: ${{ inputs.approval }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:BX_APPROVAL -cne 'I_APPROVE_C0269_PUBLIC_WINDOWS_PILOT') {
+            Write-Host 'Approval did not exactly match; no source fetched and no build started.'
+            Write-Host 'Fix: Actions > BX C0269 Windows x64 OSS Pilot (Manual) > Run workflow > main.'
+            Write-Host 'Approval: I_APPROVE_C0269_PUBLIC_WINDOWS_PILOT'
+            throw 'APPROVAL_MISMATCH_NO_BUILD_EXECUTED'
+          }
+          Write-Host 'Manual approval accepted. Public OSS build only; never a customer release.'
       - name: Prepare isolated directories
         run: |
           $ErrorActionPreference = 'Stop'
