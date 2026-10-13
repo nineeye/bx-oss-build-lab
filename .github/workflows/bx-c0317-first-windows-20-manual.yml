@@ -82,10 +82,46 @@ jobs:
                 $off = [BitConverter]::ToInt32($bytes,60)
                 if ($bytes[0] -ne 77 -or $bytes[1] -ne 90 -or $off -lt 64 -or $off -gt ($bytes.Length - 6) -or [BitConverter]::ToUInt16($bytes,$off+4) -ne 34404) { throw 'PE_X64_INVALID' }
                 $stage = 'execute'
-                $out = & $exe 2>&1
-                if ($LASTEXITCODE -ne 0 -or ($out -join [Environment]::NewLine).Trim() -cne $s.want) { throw 'EXECUTION_FAILED' }
+                # Capture native EXE output as UTF-8 instead of PowerShell's implicit
+                # native-pipeline text decoding.  Keep exit, timeout, decode and
+                # output mismatch distinct.  Never print untrusted process output.
+                $psi = [System.Diagnostics.ProcessStartInfo]::new()
+                $psi.FileName = $exe
+                $psi.UseShellExecute = $false
+                $psi.CreateNoWindow = $true
+                $psi.RedirectStandardOutput = $true
+                $psi.RedirectStandardError = $true
+                $psi.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false,$true)
+                $psi.StandardErrorEncoding = [System.Text.UTF8Encoding]::new($false,$true)
+                $proc = [System.Diagnostics.Process]::new()
+                try {
+                  $proc.StartInfo = $psi
+                  if (-not $proc.Start()) { throw 'EXECUTION_START_FAILED' }
+                  $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+                  $stderrTask = $proc.StandardError.ReadToEndAsync()
+                  if (-not $proc.WaitForExit(30000)) {
+                    try { $proc.Kill($true) } catch { }
+                    throw 'EXECUTION_TIMEOUT'
+                  }
+                  try {
+                    $stdout = $stdoutTask.GetAwaiter().GetResult()
+                    $null = $stderrTask.GetAwaiter().GetResult()
+                  } catch {
+                    throw 'EXECUTION_OUTPUT_UTF8_INVALID'
+                  }
+                  if ($proc.ExitCode -ne 0) { throw 'EXECUTION_NONZERO_EXIT' }
+                  $normalized = $stdout.Replace("`r`n", "`n").TrimEnd([char[]]@("`r","`n"))
+                  if ($normalized -cne $s.want) { throw 'EXECUTION_OUTPUT_MISMATCH' }
+                } finally {
+                  $proc.Dispose()
+                }
                 if ((Get-FileHash $src -Algorithm SHA256).Hash -cne $sourceBefore) { throw 'SOURCE_CHANGED_DURING_EXECUTION' }
                 $rows += [ordered]@{name=$s.name;source_sha=(Get-FileHash $src -Algorithm SHA256).Hash;exe_sha=(Get-FileHash $exe -Algorithm SHA256).Hash}
+                # A failed later case must not erase prior case progress on the job page.
+                Write-Host "::notice title=BX_SYNTHETIC_CASE_PASS::version=$ver;case=$($s.name)"
+                if ($env:GITHUB_STEP_SUMMARY) {
+                  Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Value "PUBLIC SYNTHETIC CASE PASS (not release): version=$ver;case=$($s.name)"
+                }
               }
               [ordered]@{state='SYNTHETIC_ONLY_NOT_RELEASE';version=$ver;run=$env:GITHUB_RUN_ID;commit=$env:GITHUB_SHA;cases=$rows} | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $root "$label.json")
             }
