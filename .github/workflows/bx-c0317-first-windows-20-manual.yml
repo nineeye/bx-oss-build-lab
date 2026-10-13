@@ -8,11 +8,19 @@ on:
         type: string
 permissions:
   contents: read
+concurrency:
+  group: bx-c0317-public-windows-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   windows-20:
     if: ${{ github.repository == 'nineeye/bx-oss-build-lab' && inputs.approval == 'I_APPROVE_BX_C0317_20' }}
     runs-on: windows-2025
     timeout-minutes: 90
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: 'utf-8'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+      PIP_NO_INPUT: '1'
     steps:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
@@ -22,6 +30,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+          $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
           $root = Join-Path $env:RUNNER_TEMP 'bx-c0317-public-only'
           New-Item -ItemType Directory -Force $root | Out-Null
           $samples = @(
@@ -36,22 +46,30 @@ jobs:
             @{name='xml';src='import xml.etree.ElementTree as E;print(E.fromstring("<a>ok</a>").text)';want='ok'},
             @{name='dynamic';src='import importlib;print(importlib.import_module("statistics").mean([2,4,6]))';want='4'}
           )
+          if ($samples.Count -ne 10 -or (@($samples | Select-Object -ExpandProperty name | Select-Object -Unique)).Count -ne 10) { throw 'INVALID_FIXTURE_COUNT' }
           foreach ($ver in @('6.16.0','6.22.3')) {
             $label = if ($ver -eq '6.16.0') { 'old' } else { 'new' }
             $envdir = Join-Path $root "venv-$label"
             python -m venv $envdir
             if ($LASTEXITCODE -ne 0) { throw 'VENV_FAILED' }
             $py = Join-Path $envdir 'Scripts\python.exe'
-            & $py -m pip --isolated install --no-cache-dir --only-binary=:all: "pyinstaller==$ver"
+            & $py -m pip --isolated install --no-cache-dir --only-binary=:all: --index-url https://pypi.org/simple "pyinstaller==$ver"
             if ($LASTEXITCODE -ne 0) { throw 'INSTALL_FAILED' }
+            $actualVer = (& $py -c 'import importlib.metadata as m;print(m.version("pyinstaller"))').Trim()
+            if ($LASTEXITCODE -ne 0 -or $actualVer -cne $ver) { throw 'PYINSTALLER_PIN_MISMATCH' }
             $rows = @()
             foreach ($s in $samples) {
               $dir = Join-Path $root "$label-$($s.name)"
               New-Item -ItemType Directory -Force $dir | Out-Null
               $src = Join-Path $dir 'main.py'
               [IO.File]::WriteAllText($src,$s.src + [Environment]::NewLine,[Text.UTF8Encoding]::new($false))
-              & $py -m PyInstaller --clean --noconfirm --onedir --noupx --log-level ERROR --name $s.name --distpath (Join-Path $dir 'dist') --workpath (Join-Path $dir 'build') --specpath (Join-Path $dir 'spec') $src
+              $sourceBefore = (Get-FileHash $src -Algorithm SHA256).Hash
+              $argsPyI = @('-m','PyInstaller','--clean','--noconfirm','--onedir','--noupx','--log-level','ERROR','--name',$s.name,'--distpath',(Join-Path $dir 'dist'),'--workpath',(Join-Path $dir 'build'),'--specpath',(Join-Path $dir 'spec'))
+              if ($s.name -eq 'dynamic') { $argsPyI += @('--hidden-import','statistics') }
+              $argsPyI += $src
+              & $py @argsPyI
               if ($LASTEXITCODE -ne 0) { throw 'BUILD_FAILED' }
+              if ((Get-FileHash $src -Algorithm SHA256).Hash -cne $sourceBefore) { throw 'SOURCE_CHANGED_DURING_BUILD' }
               $exe = Join-Path $dir "dist\$($s.name)\$($s.name).exe"
               if (-not (Test-Path $exe)) { throw 'EXE_MISSING' }
               $bytes = [IO.File]::ReadAllBytes($exe)
@@ -59,6 +77,7 @@ jobs:
               if ($bytes[0] -ne 77 -or $bytes[1] -ne 90 -or $off -lt 64 -or $off -gt ($bytes.Length - 6) -or [BitConverter]::ToUInt16($bytes,$off+4) -ne 34404) { throw 'PE_X64_INVALID' }
               $out = & $exe 2>&1
               if ($LASTEXITCODE -ne 0 -or ($out -join [Environment]::NewLine).Trim() -cne $s.want) { throw 'EXECUTION_FAILED' }
+              if ((Get-FileHash $src -Algorithm SHA256).Hash -cne $sourceBefore) { throw 'SOURCE_CHANGED_DURING_EXECUTION' }
               $rows += [ordered]@{name=$s.name;source_sha=(Get-FileHash $src -Algorithm SHA256).Hash;exe_sha=(Get-FileHash $exe -Algorithm SHA256).Hash}
             }
             [ordered]@{state='SYNTHETIC_ONLY_NOT_RELEASE';version=$ver;run=$env:GITHUB_RUN_ID;commit=$env:GITHUB_SHA;cases=$rows} | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $root "$label.json")
@@ -78,3 +97,4 @@ jobs:
             ${{ runner.temp }}/bx-c0317-public-only/new.json
             ${{ runner.temp }}/bx-c0317-public-only/ab.json
           retention-days: 3
+          if-no-files-found: error
