@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import struct
 import sys
 import tempfile
 
@@ -39,8 +40,19 @@ def verify_public_sources(app:str)->dict:
     actual_files=sorted(p.relative_to(BASE/app).as_posix() for p in (BASE/app).rglob('*') if p.is_file())
     if expected_files!=actual_files:raise GateError('PUBLIC_SOURCE_SET_CHANGED')
     for rel,expected in entry['source_sha256'].items():
-        p=(BASE/app/rel)
-        if digest(_file(p))!=expected:raise GateError('PUBLIC_SOURCE_CHANGED')
+        p=BASE/app/rel
+        data=_file(p)
+        if digest(data)==expected:
+            continue
+        # Git for Windows may check text fixtures out using CRLF.  Only a
+        # byte-for-byte LF -> CRLF line-ending conversion is equivalent;
+        # any modified content, mixed EOL or extra carriage return is blocked.
+        if (b'\r\n' in data and data.count(b'\r\n')==data.count(b'\n')
+                and data.count(b'\r\n')==data.count(b'\r')):
+            normalized=data.replace(b'\r\n',b'\n')
+            if digest(normalized)==expected:
+                continue
+        raise GateError('PUBLIC_SOURCE_CHANGED')
     return entry
 
 def run_source(app:str,output:Path)->dict:
@@ -81,6 +93,11 @@ def run_windows(app:str,version:str,work:Path)->dict:
     if returncode!=0:raise GateError('PYINSTALLER_BUILD_FAILED')
     data=_file(exe)
     if not data.startswith(b'MZ') or len(data)<1024:raise GateError('EXE_PE_INVALID')
+    pe=struct.unpack_from('<I', data, 0x3c)[0]
+    if pe<64 or pe+6>len(data) or data[pe:pe+4]!=b'PE\x00\x00':
+        raise GateError('EXE_PE_INVALID')
+    if struct.unpack_from('<H',data,pe+4)[0]!=0x8664:
+        raise GateError('EXE_PE_NOT_X64')
     out=work/'한글 경로 with spaces'/'result.json'
     out.parent.mkdir(parents=True,exist_ok=True)
     # Running from unrelated workdir verifies that resources are not CWD-relative.
