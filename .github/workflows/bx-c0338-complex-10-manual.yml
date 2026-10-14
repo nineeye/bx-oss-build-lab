@@ -1,0 +1,68 @@
+name: BX C0338 Complex Native Windows 5x2 Public Manual
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type I_APPROVE_BX_C0338_10'
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: bx-c0338-complex-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  windows-complex:
+    if: ${{ github.repository == 'nineeye/bx-oss-build-lab' && inputs.approval == 'I_APPROVE_BX_C0338_10' }}
+    runs-on: windows-2025
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        version: ['6.16.0', '6.22.3']
+        app: [tk_tcl, pillow_native, numpy_native, mp_spawn, ctypes_win]
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: 'utf-8'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+      PIP_NO_INPUT: '1'
+      BX_PI: ${{ matrix.version }}
+      BX_APP: ${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+          architecture: 'x64'
+      - name: Install pinned native test tooling and required public wheels
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip --isolated install --no-cache-dir --only-binary=:all: --index-url https://pypi.org/simple "pyinstaller==$env:BX_PI"
+          if ($LASTEXITCODE -ne 0) { throw 'PUBLIC_PINNED_PYINSTALLER_INSTALL_FAILED' }
+          if ($env:BX_APP -eq 'pillow_native') {
+            python -m pip --isolated install --no-cache-dir --only-binary=:all: --index-url https://pypi.org/simple 'Pillow==11.3.0'
+            if ($LASTEXITCODE -ne 0) { throw 'PUBLIC_PINNED_PILLOW_INSTALL_FAILED' }
+          }
+          if ($env:BX_APP -eq 'numpy_native') {
+            python -m pip --isolated install --no-cache-dir --only-binary=:all: --index-url https://pypi.org/simple 'numpy==2.3.3'
+            if ($LASTEXITCODE -ne 0) { throw 'PUBLIC_PINNED_NUMPY_INSTALL_FAILED' }
+          }
+      - name: Build Windows x64 PE and validate frozen result against pinned manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $target = Join-Path $env:RUNNER_TEMP ("bx-c0338-$env:BX_APP-$env:BX_PI")
+          python public_samples/c0338_complex/native_gate.py --app $env:BX_APP --version $env:BX_PI --work "$target"
+          if ($LASTEXITCODE -ne 0) { throw 'PUBLIC_COMPLEX_NATIVE_GATE_FAILED_NOT_CUSTOMER_RELEASE' }
+      - name: Upload compact public-only verification report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bx-c0338-${{ matrix.app }}-${{ matrix.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/bx-c0338-${{ matrix.app }}-${{ matrix.version }}/report.json
+          if-no-files-found: warn
+          retention-days: 7
