@@ -1,0 +1,36 @@
+{
+  "apps": {
+    "ctypes_win": {
+      "output_sha256": "39ff52a7da2cc8cb0f4ba5c767a0e9a6614e933fe905c1ddccb482e0c296ec3a",
+      "source_sha256": {
+        "main.py": "273577e879805604612655105fb498767bdd7da06dd0c7a0c7efa2ccabafecdb"
+      }
+    },
+    "mp_spawn": {
+      "output_sha256": "563920c95a2358c8ecaf1e2311b3a2899bb7ef79c5e62e710ff55ac14087d6b8",
+      "source_sha256": {
+        "main.py": "421966d95056ad142a79db1fae567f0c190e566f4079e944a775d67790376b96"
+      }
+    },
+    "numpy_native": {
+      "output_sha256": "67cdb01dac3be005a3a0f17040c647b566feddd1a906a39db30f358b5f7c9534",
+      "source_sha256": {
+        "main.py": "57cdde5499ab141d06b761daf0de60be511c523402fcc5dc1538b6fbe05380b4"
+      }
+    },
+    "pillow_native": {
+      "output_sha256": "91f5561c8ab34a9a2c771274b0a26b849333d14537a4a8b0bf0a3b7a455f3b6b",
+      "source_sha256": {
+        "data/two_pixels.ppm": "651431b33e4cf69d88e375530c55cadf9be11d1188d80e64b66a5340111f6e56",
+        "main.py": "68fbb661ac9508fe5e1d838da38e2a2089d5503d7188ab26101372a5dbdc5063"
+      }
+    },
+    "tk_tcl": {
+      "output_sha256": "7890eb102cbb3c844beea26686a77989591334d31d616fee68e3b4150f343880",
+      "source_sha256": {
+        "main.py": "95493e093f2478b78285e6c4faba75c362f06875ede71be4e2a2a5c8f6c22422"
+      }
+    }
+  },
+  "schema": "HBX_C0338_PUBLIC_COMPLEX_MATRIX_V1"
+}
