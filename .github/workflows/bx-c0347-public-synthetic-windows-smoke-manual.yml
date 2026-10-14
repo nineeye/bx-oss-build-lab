@@ -1,0 +1,55 @@
+name: BX C0347 Public Synthetic Windows Smoke Manual
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: Type I_APPROVE_BX_C0347_PUBLIC_SYNTHETIC
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  public-smoke:
+    if: ${{ inputs.approval == 'I_APPROVE_BX_C0347_PUBLIC_SYNTHETIC' }}
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13.16'
+          architecture: x64
+      - name: Install fixed PyInstaller
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check --only-binary=:all: 'PyInstaller==6.16.0'
+          if ($LASTEXITCODE -ne 0) { throw 'INSTALL_FAILED' }
+      - name: Build public one-file source and run twice
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $w = Join-Path $env:RUNNER_TEMP 'bx-c0347'
+          New-Item -ItemType Directory -Path $w -Force | Out-Null
+          $source = Join-Path $w 'main.py'
+          [IO.File]::WriteAllText($source, "print('HBX_C0347_PUBLIC_PASS')")
+          python -m PyInstaller --noconfirm --clean --onedir --name HBX_C0347_Public --distpath "$w/dist" --workpath "$w/build" --specpath "$w/spec" "$source"
+          if ($LASTEXITCODE -ne 0) { throw 'BUILD_FAILED' }
+          $built = Join-Path $w 'dist/HBX_C0347_Public'
+          $sha = (Get-FileHash -LiteralPath (Join-Path $built 'HBX_C0347_Public.exe') -Algorithm SHA256).Hash
+          foreach ($name in @('한글 공백 하나','한글 공백 둘')) {
+            $moved = Join-Path $w $name
+            Copy-Item -LiteralPath $built -Destination $moved -Recurse
+            $exe = Join-Path $moved 'HBX_C0347_Public.exe'
+            $stdout = (& $exe | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or $stdout -cne 'HBX_C0347_PUBLIC_PASS') { throw 'EXECUTION_FAILED' }
+            if ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -cne $sha) { throw 'EXE_HASH_CHANGED' }
+          }
+          $report = [ordered]@{state='PUBLIC_SYNTHETIC_2X_PASS_NOT_PRODUCT';run=$env:GITHUB_RUN_ID;attempt=$env:GITHUB_RUN_ATTEMPT;commit=$env:GITHUB_SHA;exe_sha256=$sha;product_engine_tested=$false;customer_release_approved=$false}
+          $report | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'bx-c0347-result.json') -Encoding utf8
+      - name: Upload report only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bx-c0347-public-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/bx-c0347-result.json
+          if-no-files-found: warn
+          retention-days: 7
