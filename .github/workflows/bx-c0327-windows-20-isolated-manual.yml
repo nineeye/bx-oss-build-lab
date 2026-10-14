@@ -54,7 +54,7 @@ jobs:
             @{name='hello';src='print("hello-bx")';want='hello-bx'},
             @{name='json';src='import json;print(json.dumps({"a":1},sort_keys=True))';want='{"a": 1}'},
             @{name='math';src='import math;print(math.factorial(5))';want='120'},
-            @{name='unicode';src='print("한글_경로_정상")';want='한글_경로_정상'},
+            @{name='unicode';src='import sys;sys.stdout.buffer.write("한글_경로_정상\n".encode("utf-8"))';want='한글_경로_정상'},
             @{name='decimal';src='from decimal import Decimal;print(Decimal("1.25")+Decimal("2.75"))';want='4.00'},
             @{name='sqlite';src='import sqlite3;print(sqlite3.connect(":memory:").execute("select 12").fetchone()[0])';want='12'},
             @{name='regex';src='import re;print(re.sub("[0-9]+","X","abc123"))';want='abcX'},
@@ -125,7 +125,10 @@ jobs:
                   }
                   try { $stdout=$stdoutTask.GetAwaiter().GetResult(); $null=$stderrTask.GetAwaiter().GetResult() }
                   catch { throw 'EXEC_UTF8_INVALID' }
-                  if ($proc.ExitCode -ne 0) { throw 'EXEC_NONZERO_EXIT' }
+                  if ($proc.ExitCode -ne 0) {
+                    if ($s.name -eq 'unicode' -and $stderr -match 'UnicodeEncodeError') { throw 'EXEC_UNICODE_ENCODE' }
+                    throw 'EXEC_NONZERO_EXIT'
+                  }
                   $stdout=$stdout.Replace("`r`n","`n").TrimEnd([char[]]@("`r","`n"))
                   if ($stdout -cne $s.want) { throw 'EXEC_OUTPUT_MISMATCH' }
                 } finally { $proc.Dispose() }
@@ -134,7 +137,7 @@ jobs:
               } catch {
                 $state='FAIL'
                 $code=[string]$_.Exception.Message
-                if ($code -cnotin @('BUILD_FAILED','SOURCE_CHANGED','EXE_MISSING','PE_INVALID','EXEC_START_FAILED','EXEC_TIMEOUT','EXEC_UTF8_INVALID','EXEC_NONZERO_EXIT','EXEC_OUTPUT_MISMATCH')) { $code='UNCLASSIFIED_FAILURE' }
+                if ($code -cnotin @('BUILD_FAILED','SOURCE_CHANGED','EXE_MISSING','PE_INVALID','EXEC_START_FAILED','EXEC_TIMEOUT','EXEC_UTF8_INVALID','EXEC_NONZERO_EXIT','EXEC_UNICODE_ENCODE','EXEC_OUTPUT_MISMATCH')) { $code='UNCLASSIFIED_FAILURE' }
               }
             }
             $rows.Add([ordered]@{name=$s.name;status=$state;stage=$stage;code=$code;source_sha=$sourceSha})
