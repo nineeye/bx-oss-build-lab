@@ -1,0 +1,136 @@
+name: BX C0331 Public Business 3x2 Native Windows (Manual)
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type I_APPROVE_BX_C0331_6'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: bx-c0331-public-only-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  windows-business:
+    if: ${{ github.repository == 'nineeye/bx-oss-build-lab' && inputs.approval == 'I_APPROVE_BX_C0331_6' }}
+    runs-on: windows-2025
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        version: ['6.16.0','6.22.3']
+        app: [order_invoice,inventory_report,document_bundle]
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: 'utf-8'
+      PIP_NO_INPUT: '1'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+      BX_VERSION: ${{ matrix.version }}
+      BX_APP: ${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+          architecture: 'x64'
+      - name: Build and execute public business app with bundled resources
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+          $OutputEncoding=[Text.UTF8Encoding]::new($false)
+          $app=$env:BX_APP; $ver=$env:BX_VERSION
+          if ($app -cnotin @('order_invoice','inventory_report','document_bundle') -or $ver -cnotin @('6.16.0','6.22.3')) { throw 'INVALID_FIXED_MATRIX' }
+          $work=Join-Path $env:RUNNER_TEMP "bx-c0331-$app-$ver"
+          New-Item -ItemType Directory -Force $work | Out-Null
+          $reportPath=Join-Path $work 'report.json'
+          $state='FAIL';$code='UNKNOWN';$sourceHash='';$exeHash='';$outputHash=''
+          try {
+            $srcDir=Join-Path $env:GITHUB_WORKSPACE "public_samples/c0331_workflows/$app"
+            $src=Join-Path $srcDir 'main.py'
+            $sourceHash=(Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash.ToLowerInvariant()
+            $assets=Get-ChildItem -LiteralPath (Join-Path $srcDir 'data') -File | Sort-Object Name
+            $expectCount=if ($app -eq 'inventory_report') {2} elseif ($app -eq 'document_bundle') {2} else {1}
+            if ($assets.Count -ne $expectCount) { throw 'RESOURCE_COUNT_INVALID' }
+            $venv=Join-Path $work 'venv'
+            python -m venv $venv
+            if ($LASTEXITCODE -ne 0) { throw 'VENV_FAILED' }
+            $py=Join-Path $venv 'Scripts/python.exe'
+            & $py -m pip --isolated install --no-cache-dir --only-binary=:all: --index-url https://pypi.org/simple "pyinstaller==$ver"
+            if ($LASTEXITCODE -ne 0) { throw 'PYINSTALLER_INSTALL_FAILED' }
+            $installed=(& $py -c 'import importlib.metadata as m;print(m.version("pyinstaller"))').Trim()
+            if ($installed -cne $ver) { throw 'PYINSTALLER_VERSION_MISMATCH' }
+            $buildArgs=@('-m','PyInstaller','--clean','--noconfirm','--onedir','--noupx','--log-level','ERROR','--name',$app,'--distpath',(Join-Path $work 'dist'),'--workpath',(Join-Path $work 'build'),'--specpath',(Join-Path $work 'spec'))
+            foreach ($asset in $assets) { $buildArgs += @('--add-data',($asset.FullName+';data')) }
+            $buildArgs += $src
+            & $py @buildArgs
+            if ($LASTEXITCODE -ne 0) { throw 'PYINSTALLER_BUILD_FAILED' }
+            if ((Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sourceHash) { throw 'SOURCE_CHANGED' }
+            $exe=Join-Path $work "dist/$app/$app.exe"
+            if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'EXE_MISSING' }
+            $raw=[IO.File]::ReadAllBytes($exe)
+            if ($raw.Length -lt 70 -or $raw[0] -ne 77 -or $raw[1] -ne 90) { throw 'EXE_PE_INVALID' }
+            $offset=[BitConverter]::ToInt32($raw,60)
+            if ($offset -lt 64 -or $offset -gt $raw.Length - 6 -or [BitConverter]::ToUInt16($raw,$offset+4) -ne 34404) { throw 'EXE_PE_INVALID' }
+            $exeHash=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+            $target=Join-Path $work '한글 경로 with spaces'
+            New-Item -ItemType Directory -Force $target | Out-Null
+            $out=if($app -eq 'document_bundle'){Join-Path $target 'documents'}elseif($app -eq 'inventory_report'){Join-Path $target 'reorder.json'}else{Join-Path $target 'invoice.csv'}
+            $cwd=Join-Path $work 'unrelated-working-dir'
+            New-Item -ItemType Directory -Force $cwd | Out-Null
+            $psi=[Diagnostics.ProcessStartInfo]::new()
+            $psi.FileName=$exe;$psi.WorkingDirectory=$cwd;$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
+            $psi.ArgumentList.Add('--output');$psi.ArgumentList.Add($out)
+            $psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
+            $psi.StandardOutputEncoding=[Text.UTF8Encoding]::new($false,$true)
+            $psi.StandardErrorEncoding=[Text.UTF8Encoding]::new($false,$true)
+            $proc=[Diagnostics.Process]::new()
+            try {
+              $proc.StartInfo=$psi
+              if(-not $proc.Start()){throw 'EXE_START_FAILED'}
+              $stdoutTask=$proc.StandardOutput.ReadToEndAsync();$stderrTask=$proc.StandardError.ReadToEndAsync()
+              if(-not $proc.WaitForExit(30000)){try{$proc.Kill($true)}catch{};throw 'EXE_TIMEOUT'}
+              $stdout=$stdoutTask.GetAwaiter().GetResult();$null=$stderrTask.GetAwaiter().GetResult()
+              if($proc.ExitCode -ne 0){throw 'EXE_NONZERO_EXIT'}
+            } finally {$proc.Dispose()}
+            $observed=$stdout.Trim() | ConvertFrom-Json
+            if($app -eq 'order_invoice'){
+              if($observed.kind -cne 'invoice' -or $observed.rows -ne 3 -or $observed.amount -cne '6962.00'){throw 'INVOICE_SUMMARY_MISMATCH'}
+              $outputHash=(Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash.ToLowerInvariant()
+              if($outputHash -cne 'f7970c15266ef9e9a05e7a1781ad00717b42ea823942aeb35eec89f9dbb59225'){throw 'INVOICE_OUTPUT_MISMATCH'}
+            }elseif($app -eq 'inventory_report'){
+              if($observed.kind -cne 'reorder' -or $observed.rows -ne 2 -or $observed.reorder_total -ne 17){throw 'INVENTORY_SUMMARY_MISMATCH'}
+              $outputHash=(Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash.ToLowerInvariant()
+              if($outputHash -cne '0071eef6fb65ce4400e8774fc580e2b2337aecac78420c5e0f25543331e98c27'){throw 'INVENTORY_OUTPUT_MISMATCH'}
+            }else{
+              if($observed.kind -cne 'document' -or $observed.rows -ne 2 -or (@($observed.names).Count) -ne 2){throw 'DOCUMENT_SUMMARY_MISMATCH'}
+              $first=Join-Path $out 'C001.txt';$second=Join-Path $out 'C002.txt'
+              if(-not (Test-Path $first) -or -not (Test-Path $second)){throw 'DOCUMENT_OUTPUT_MISSING'}
+              $hashA=(Get-FileHash -LiteralPath $first -Algorithm SHA256).Hash.ToLowerInvariant()
+              $hashB=(Get-FileHash -LiteralPath $second -Algorithm SHA256).Hash.ToLowerInvariant()
+              if($hashA -cne '37222018a9cb0c86c772a730b0d63736fd03ce67b759598f66c99a356e0ed535' -or $hashB -cne 'bac9b4e1b5149977013f75f1e73e025223a1ac8de7cdf4ce15cbff33650a95f9'){throw 'DOCUMENT_OUTPUT_MISMATCH'}
+              $outputHash=$hashA+':'+$hashB
+            }
+            if ((Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sourceHash) { throw 'SOURCE_CHANGED' }
+            $state='PASS';$code='NONE'
+          } catch {
+            $code=[string]$_.Exception.Message
+            if($code -cnotmatch '^[A-Z0-9_]{3,70}$'){$code='PUBLIC_SAMPLE_FAILED'}
+          } finally {
+            $result=[ordered]@{state='PUBLIC_BUSINESS_SAMPLE_NOT_CUSTOMER_RELEASE';result=$state;reason=$code;run=[string]$env:GITHUB_RUN_ID;commit=[string]$env:GITHUB_SHA;app=$app;pyinstaller=$ver;source_sha256=$sourceHash;exe_sha256=$exeHash;output_sha256=$outputHash;customer_release_approved=$false}
+            [IO.File]::WriteAllText($reportPath,($result | ConvertTo-Json -Depth 4 -Compress),[Text.UTF8Encoding]::new($false))
+            Write-Host "::notice title=BX_PUBLIC_BUSINESS::app=$app;version=$ver;result=$state;reason=$code"
+          }
+          if($state -cne 'PASS'){throw 'PUBLIC_BUSINESS_NATIVE_TEST_FAILED_NOT_RELEASE'}
+      - name: Upload compact result (never customer binaries or data)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bx-c0331-${{ matrix.app }}-${{ matrix.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/bx-c0331-${{ matrix.app }}-${{ matrix.version }}/report.json
+          if-no-files-found: warn
+          retention-days: 7
