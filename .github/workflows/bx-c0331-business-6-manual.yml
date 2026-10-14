@@ -112,8 +112,8 @@ jobs:
               if(-not (Test-Path $first) -or -not (Test-Path $second)){throw 'DOCUMENT_OUTPUT_MISSING'}
               $hashA=(Get-FileHash -LiteralPath $first -Algorithm SHA256).Hash.ToLowerInvariant()
               $hashB=(Get-FileHash -LiteralPath $second -Algorithm SHA256).Hash.ToLowerInvariant()
-              if($hashA -cne '37222018a9cb0c86c772a730b0d63736fd03ce67b759598f66c99a356e0ed535' -or $hashB -cne 'bac9b4e1b5149977013f75f1e73e025223a1ac8de7cdf4ce15cbff33650a95f9'){throw 'DOCUMENT_OUTPUT_MISMATCH'}
               $outputHash=$hashA+':'+$hashB
+              if($hashA -cne '37222018a9cb0c86c772a730b0d63736fd03ce67b759598f66c99a356e0ed535' -or $hashB -cne 'bac9b4e1b5149977013f75f1e73e025223a1ac8de7cdf4ce15cbff33650a95f9'){throw 'DOCUMENT_OUTPUT_MISMATCH'}
             }
             if ((Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sourceHash) { throw 'SOURCE_CHANGED' }
             $state='PASS';$code='NONE'
