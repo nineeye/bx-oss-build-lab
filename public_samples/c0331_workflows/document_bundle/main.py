@@ -21,7 +21,7 @@ def main():
         docs.append((code+'.txt', body))
     args.output.mkdir(parents=True, exist_ok=True)
     for name,body in docs:
-        (args.output/name).write_text(body, encoding='utf-8')
+        (args.output/name).write_bytes(body.encode('utf-8'))
     print(json.dumps({'kind': 'document', 'rows': len(docs), 'names': sorted(n for n,_ in docs)}, sort_keys=True))
 
 if __name__ == '__main__':
