@@ -149,21 +149,38 @@ jobs:
             & $py (Join-Path $src 'bx_c0365_private_native_receipt.py') --approval I_APPROVE_BX_C0365_PRIVATE_WINDOWS_FIXED_3X12 --output-root $out --report-file $receipt --timeout-seconds 5400 1> $raw 2> $err
             $code=$LASTEXITCODE
             if ($code -eq 0) {
-              $v=Get-Content -LiteralPath $raw -Raw -Encoding utf8 | ConvertFrom-Json
-              if ($v.state -ceq 'PRIVATE_BX_WINDOWS_3X12_SELF_REPORT_WITH_LOCAL_RECEIPT_NOT_SALES' -and
-                  $v.actual_windows_builds -eq 3 -and $v.actual_windows_exe_runs -eq 12 -and
-                  $v.durable_local_receipt -eq $true -and $v.private_bx_native_pass_self_reported -eq $true -and
-                  $v.customer_release_approved -eq $false -and $v.independent_windows_attestation -eq $false) {
-                $status='PRIVATE_BX_NATIVE_SELF_REPORTED_PASS_NOT_SALES';$builds=3;$runs=12
+              # C0367: fail closed unless disk receipt exactly matches child stdout.
+              if (-not (Test-Path -LiteralPath $receipt -PathType Leaf)) { throw 'LOCAL_DURABLE_RECEIPT_MISSING' }
+              if ((Get-Item -LiteralPath $receipt).Length -gt 8192 -or (Get-Item -LiteralPath $raw).Length -gt 16384) { throw 'RECEIPT_SIZE_LIMIT' }
+              $reparse=[IO.FileAttributes]::ReparsePoint
+              if (((Get-Item -LiteralPath $receipt).Attributes -band $reparse) -ne 0) { throw 'RECEIPT_REPARSE_DENIED' }
+              $receiptSha=(Get-FileHash -LiteralPath $receipt -Algorithm SHA256).Hash.ToLowerInvariant()
+              $stdoutDoc=Get-Content -LiteralPath $raw -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+              $diskDoc=Get-Content -LiteralPath $receipt -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+              if (-not ($stdoutDoc -is [System.Collections.IDictionary]) -or -not ($diskDoc -is [System.Collections.IDictionary])) { throw 'RECEIPT_INVALID_JSON' }
+              if ([string]$stdoutDoc['local_receipt_sha256'] -cne $receiptSha) { throw 'DOUBLE_RECEIPT_SHA_MISMATCH' }
+              [void]$stdoutDoc.Remove('local_receipt_sha256')
+              if (($stdoutDoc | ConvertTo-Json -Compress -Depth 20) -cne ($diskDoc | ConvertTo-Json -Compress -Depth 20)) { throw 'DOUBLE_RECEIPT_CONTENT_MISMATCH' }
+              $d=$diskDoc
+              if ($d['schema'] -ceq 'HBX_C0365_PRIVATE_NATIVE_DURABLE_GATE_V1' -and
+                  $d['state'] -ceq 'PRIVATE_BX_WINDOWS_3X12_SELF_REPORT_WITH_LOCAL_RECEIPT_NOT_SALES' -and
+                  $d['phase'] -ceq 'COMPLETED' -and $d['reason_code'] -ceq '' -and
+                  $d['actual_windows_builds'] -is [int] -and $d['actual_windows_builds'] -eq 3 -and
+                  $d['actual_windows_exe_runs'] -is [int] -and $d['actual_windows_exe_runs'] -eq 12 -and
+                  $d['durable_local_receipt'] -ceq $true -and $d['native_runner_invoked'] -ceq $true -and
+                  $d['private_bx_engine_executed'] -ceq $true -and $d['private_bx_native_pass_self_reported'] -ceq $true -and
+                  $d['customer_release_approved'] -ceq $false -and $d['independent_windows_attestation'] -ceq $false -and
+                  $d['sales_gates_passed'] -eq 0 -and $d['external_customer_projects_tested'] -eq 0) {
+                $status='PRIVATE_BX_NATIVE_DOUBLE_RECEIPT_SELF_REPORT_NOT_SALES';$builds=3;$runs=12
               }
             }
           } catch { $status='PRIVATE_BX_NATIVE_FAILED_REDACTED' }
-          $minimal=[ordered]@{schema='HBX_C0366_MINIMAL_PUBLIC_WINDOWS_STATUS_V1';
+          $minimal=[ordered]@{schema='HBX_C0367_MINIMAL_DOUBLE_RECEIPT_WINDOWS_STATUS_V1';
             state=$status;github_run_id=$env:GITHUB_RUN_ID;github_run_attempt=$env:GITHUB_RUN_ATTEMPT;
             product_native_builds=$builds;product_native_exe_runs=$runs;
             customer_release_approved=$false;independently_attested=$false;private_source_committed_publicly=$false}
           $minimal | ConvertTo-Json -Depth 2 | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'bx_c0366_public_status.json') -Encoding utf8
-          if ($status -ne 'PRIVATE_BX_NATIVE_SELF_REPORTED_PASS_NOT_SALES') { throw 'PRIVATE_NATIVE_GATE_DID_NOT_PASS' }
+          if ($status -ne 'PRIVATE_BX_NATIVE_DOUBLE_RECEIPT_SELF_REPORT_NOT_SALES') { throw 'PRIVATE_NATIVE_GATE_DID_NOT_PASS' }
       - name: Publish MINIMAL public-safe status only (NO source, EXEs or raw logs)
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
