@@ -1,4 +1,5 @@
 name: BX C0356 Public Fixtures Windows 3 Builds 12 Runs
+# LF .gitattributes checkout fix verified on this rerun.
 on:
   push:
     branches: [main]
