@@ -1,0 +1,174 @@
+name: BX C0366 Opt In Private Source Windows Bridge
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/bx-c0366-private-source-windows-bridge.yml]
+  workflow_dispatch:
+    inputs:
+      private_commit_sha:
+        description: Immutable SHA of owner-reviewed PRIVATE repository commit
+        required: true
+        type: string
+      private_kit_sha256:
+        description: SHA256 of pinned private C0365 runner ZIP
+        required: true
+        type: string
+      private_native_approval:
+        description: Must equal I_APPROVE_BX_C0366_PRIVATE_RUNNER_BRIDGE
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  safe-public-probe:
+    runs-on: windows-2025
+    timeout-minutes: 5
+    steps:
+      - name: No private checkout on automatic push
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if ($env:GITHUB_REPOSITORY -cne 'nineeye/bx-oss-build-lab') { throw 'WRONG_REPO' }
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            Write-Output 'C0366_PUBLIC_PROBE_ONLY_NO_TOKEN_NO_PRIVATE_SOURCE'
+          }
+  private-owner-opt-in:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.private_native_approval == 'I_APPROVE_BX_C0366_PRIVATE_RUNNER_BRIDGE' && vars.BX_BRIDGE_ENABLED == 'true' && github.repository == 'nineeye/bx-oss-build-lab' }}
+    runs-on: windows-2025
+    timeout-minutes: 95
+    steps:
+      - name: Reject unpinned source and missing opt-in
+        shell: pwsh
+        env:
+          PRIVATE_REPO: ${{ vars.BX_PRIVATE_REPOSITORY }}
+          PRIVATE_COMMIT: ${{ inputs.private_commit_sha }}
+          PRIVATE_KIT_SHA: ${{ inputs.private_kit_sha256 }}
+        run: |
+          $ErrorActionPreference='Stop'
+          if ($env:PRIVATE_REPO -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw 'PRIVATE_REPO_REFERENCE_MISSING' }
+          if ($env:PRIVATE_COMMIT -cnotmatch '^[0-9a-f]{40}$') { throw 'IMMUTABLE_COMMIT_SHA_REQUIRED' }
+          if ($env:PRIVATE_KIT_SHA -cnotmatch '^[0-9a-f]{64}$') { throw 'IMMUTABLE_ZIP_HASH_REQUIRED' }
+      - name: Read only private repository checkout in disposable Windows workspace
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ${{ vars.BX_PRIVATE_REPOSITORY }}
+          ref: ${{ inputs.private_commit_sha }}
+          token: ${{ secrets.BX_PRIVATE_READ_PAT }}
+          persist-credentials: false
+          fetch-depth: 1
+          path: private_checkout
+      - name: Verify private visibility and exact commit without listing source
+        shell: pwsh
+        env:
+          PRIVATE_REPO: ${{ vars.BX_PRIVATE_REPOSITORY }}
+          PRIVATE_COMMIT: ${{ inputs.private_commit_sha }}
+          READ_PAT: ${{ secrets.BX_PRIVATE_READ_PAT }}
+        run: |
+          $ErrorActionPreference='Stop'
+          if ([string]::IsNullOrEmpty($env:READ_PAT)) { throw 'READ_ONLY_TOKEN_MISSING' }
+          $headers=@{Authorization=('Bearer '+$env:READ_PAT);Accept='application/vnd.github+json'}
+          $meta=Invoke-RestMethod -Uri ('https://api.github.com/repos/'+$env:PRIVATE_REPO) -Headers $headers
+          if ($meta.private -ne $true) { throw 'PRIVATE_REPOSITORY_VISIBILITY_REQUIRED' }
+          $actual=(& git -C private_checkout rev-parse HEAD).Trim()
+          if ($actual -cne $env:PRIVATE_COMMIT) { throw 'COMMIT_SHA_MISMATCH' }
+      - name: Set up exact Windows Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13.16'
+          architecture: x64
+      - name: Install pinned PyInstaller into isolated BX Python
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python -m pip install --disable-pip-version-check --only-binary=:all: 'PyInstaller==6.16.0'
+          if ($LASTEXITCODE -ne 0) { throw 'PINNED_PYINSTALLER_FAILED' }
+          $root=(& python -c 'import sys; print(sys.prefix)').Trim()
+          $target=Join-Path $env:LOCALAPPDATA 'BX_Python313'
+          New-Item -ItemType Directory -Path $target -Force | Out-Null
+          & robocopy $root $target /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+          if ($LASTEXITCODE -ge 8) { throw 'ISOLATED_HOST_COPY_FAILED' }
+          $py=Join-Path $target 'python.exe'
+          & $py -c 'import sys,PyInstaller; assert sys.version_info[:3]==(3,13,16); assert PyInstaller.__version__=="6.16.0"'
+          if ($LASTEXITCODE -ne 0) { throw 'ISOLATED_HOST_VERIFICATION_FAILED' }
+      - name: Check pinned private kit ZIP and extract safe bounded paths
+        shell: pwsh
+        env:
+          EXPECTED_ZIP_SHA: ${{ inputs.private_kit_sha256 }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $zip=Join-Path $env:GITHUB_WORKSPACE 'private_checkout/C0365_PRIVATE_NATIVE_RUNNER.zip'
+          if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { throw 'C0365_KIT_NOT_PRESENT_IN_PRIVATE_COMMIT' }
+          $sha=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha -cne $env:EXPECTED_ZIP_SHA) { throw 'PINNED_PRIVATE_KIT_SHA_MISMATCH' }
+          $py=Join-Path $env:LOCALAPPDATA 'BX_Python313/python.exe'
+          $target=Join-Path $env:RUNNER_TEMP 'bx_c0366_ephemeral_private'
+          $script=Join-Path $env:RUNNER_TEMP 'bx_c0366_guard.py'
+          @'
+          import hashlib,pathlib,stat,sys,zipfile,shutil
+          archive=pathlib.Path(sys.argv[1]);target=pathlib.Path(sys.argv[2]);wanted=sys.argv[3]
+          data=archive.read_bytes()
+          if len(data)>4194304 or hashlib.sha256(data).hexdigest()!=wanted:raise SystemExit('UNTRUSTED_PRIVATE_ZIP')
+          with zipfile.ZipFile(archive) as z:
+              entries=z.infolist();names=set();total=0
+              if len(entries)!=67:raise SystemExit('BAD_PRIVATE_KIT_COUNT')
+              for e in entries:
+                  n=e.filename;components=n.split('/');typ=(e.external_attr>>16)&0o170000
+                  if (not n or n.startswith(('/',chr(92))) or chr(92) in n or ':' in n or
+                      len(n)>230 or any(not p or p in ('.','..') or p.rstrip(' .')!=p for p in components) or
+                      n.casefold() in names or e.is_dir() or typ in (stat.S_IFLNK,stat.S_IFDIR) or
+                      e.file_size>1048576 or e.flag_bits&1):raise SystemExit('PRIVATE_ZIP_PATH_DENIED')
+                  names.add(n.casefold());total+=e.file_size
+                  if total>8388608:raise SystemExit('PRIVATE_KIT_EXPANDED_LIMIT')
+              if 'bx_c0365_private_native_receipt.py' not in names:raise SystemExit('PRIVATE_ENGINE_NOT_FOUND')
+              if target.exists() or target.is_symlink():raise SystemExit('EXTRACT_TARGET_NOT_NEW')
+              target.mkdir()
+              try:
+                  for e in entries:
+                      blob=z.read(e);p=target.joinpath(*e.filename.split('/'))
+                      p.parent.mkdir(parents=True,exist_ok=True)
+                      with p.open('xb') as f:f.write(blob)
+                      if hashlib.sha256(p.read_bytes()).digest()!=hashlib.sha256(blob).digest():raise SystemExit('SOURCE_RECHECK_FAILED')
+              except BaseException:
+                  shutil.rmtree(target,ignore_errors=True);raise
+          print('C0366_PINNED_KIT_VALIDATED_NO_WINDOWS_CLAIM')
+          '@ | Set-Content -LiteralPath $script -Encoding utf8
+          & $py $script $zip $target $env:EXPECTED_ZIP_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'PRIVATE_SOURCE_STAGING_FAILED' }
+      - name: Execute private product engine with NO private stdout in public logs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $py=Join-Path $env:LOCALAPPDATA 'BX_Python313/python.exe'
+          $src=Join-Path $env:RUNNER_TEMP 'bx_c0366_ephemeral_private'
+          $out=Join-Path $env:RUNNER_TEMP 'bx_c0366_private_outputs'
+          $receipt=Join-Path $env:RUNNER_TEMP 'BX_C0365_bridged_receipt.json'
+          $raw=Join-Path $env:RUNNER_TEMP 'bx_c0366_stdout_private.txt'
+          $err=Join-Path $env:RUNNER_TEMP 'bx_c0366_stderr_private.txt'
+          $status='PRIVATE_BX_NATIVE_NOT_CERTIFIED';$builds=0;$runs=0
+          try {
+            & $py (Join-Path $src 'bx_c0365_private_native_receipt.py') --approval I_APPROVE_BX_C0365_PRIVATE_WINDOWS_FIXED_3X12 --output-root $out --report-file $receipt --timeout-seconds 5400 1> $raw 2> $err
+            $code=$LASTEXITCODE
+            if ($code -eq 0) {
+              $v=Get-Content -LiteralPath $raw -Raw -Encoding utf8 | ConvertFrom-Json
+              if ($v.state -ceq 'PRIVATE_BX_WINDOWS_3X12_SELF_REPORT_WITH_LOCAL_RECEIPT_NOT_SALES' -and
+                  $v.actual_windows_builds -eq 3 -and $v.actual_windows_exe_runs -eq 12 -and
+                  $v.durable_local_receipt -eq $true -and $v.private_bx_native_pass_self_reported -eq $true -and
+                  $v.customer_release_approved -eq $false -and $v.independent_windows_attestation -eq $false) {
+                $status='PRIVATE_BX_NATIVE_SELF_REPORTED_PASS_NOT_SALES';$builds=3;$runs=12
+              }
+            }
+          } catch { $status='PRIVATE_BX_NATIVE_FAILED_REDACTED' }
+          $minimal=[ordered]@{schema='HBX_C0366_MINIMAL_PUBLIC_WINDOWS_STATUS_V1';
+            state=$status;github_run_id=$env:GITHUB_RUN_ID;github_run_attempt=$env:GITHUB_RUN_ATTEMPT;
+            product_native_builds=$builds;product_native_exe_runs=$runs;
+            customer_release_approved=$false;independently_attested=$false;private_source_committed_publicly=$false}
+          $minimal | ConvertTo-Json -Depth 2 | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'bx_c0366_public_status.json') -Encoding utf8
+          if ($status -ne 'PRIVATE_BX_NATIVE_SELF_REPORTED_PASS_NOT_SALES') { throw 'PRIVATE_NATIVE_GATE_DID_NOT_PASS' }
+      - name: Publish MINIMAL public-safe status only (NO source, EXEs or raw logs)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bx-c0366-minimal-public-status-${{ github.run_id }}
+          path: ${{ runner.temp }}/bx_c0366_public_status.json
+          if-no-files-found: warn
+          retention-days: 2
