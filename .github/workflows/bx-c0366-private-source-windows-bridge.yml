@@ -47,7 +47,7 @@ jobs:
           $ErrorActionPreference='Stop'
           if ($env:PRIVATE_REPO -cne 'nineeye/afo-release-factory-build') { throw 'PRIVATE_REPO_REFERENCE_MISSING' }
           if ($env:PRIVATE_COMMIT -cnotmatch '^[0-9a-f]{40}$') { throw 'IMMUTABLE_COMMIT_SHA_REQUIRED' }
-          if ($env:PRIVATE_KIT_SHA -cnotmatch '^[0-9a-f]{64}$') { throw 'IMMUTABLE_ZIP_HASH_REQUIRED' }
+          if ($env:PRIVATE_KIT_SHA -cne '6568b0281a860ac403633abdef7a4d8c90a822f90eb95d4f3419bddd63f1136d') { throw 'C0368_OFFICIALLY_PINNED_C0365_ZIP_HASH_REQUIRED' }
       - name: Read only private repository checkout in disposable Windows workspace
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -74,6 +74,25 @@ jobs:
           if ($meta.private -ne $true) { throw 'PRIVATE_REPOSITORY_VISIBILITY_REQUIRED' }
           $actual=(& git -C private_checkout rev-parse HEAD).Trim()
           if ($actual -cne $env:PRIVATE_COMMIT) { throw 'COMMIT_SHA_MISMATCH' }
+      - name: Fail fast if official private C0365 kit is absent from pinned commit
+        shell: pwsh
+        env:
+          EXPECTED_ZIP_SHA: ${{ inputs.private_kit_sha256 }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $kit=Join-Path $env:GITHUB_WORKSPACE 'private_checkout/C0365_PRIVATE_NATIVE_RUNNER.zip'
+          if (-not (Test-Path -LiteralPath $kit -PathType Leaf)) {
+            throw 'C0368_OFFICIAL_KIT_MISSING_IN_PRIVATE_REPOSITORY'
+          }
+          if (((Get-Item -LiteralPath $kit).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'C0368_PRIVATE_KIT_REPARSE_POINT_DENIED'
+          }
+          $size=(Get-Item -LiteralPath $kit).Length
+          if ($size -le 0 -or $size -gt 4194304) { throw 'C0368_PRIVATE_KIT_SIZE_INVALID' }
+          if ((Get-FileHash -LiteralPath $kit -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:EXPECTED_ZIP_SHA) {
+            throw 'C0368_PRIVATE_KIT_PINNED_HASH_MISMATCH'
+          }
+          Write-Output 'C0368_PRIVATE_KIT_SHA256_MATCH_NO_SOURCE_DISCLOSED'
       - name: Set up exact Windows Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
