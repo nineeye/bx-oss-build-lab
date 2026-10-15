@@ -1,0 +1,75 @@
+name: BX C0357 Windows Isolated Python Host Probe
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/bx-c0357-isolated-host-windows-manual.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolated-host:
+    runs-on: windows-2025
+    timeout-minutes: 50
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: '1'
+    steps:
+      - name: Obtain Python 3.13.16 x64
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13.16'
+          architecture: x64
+      - name: Pin PyInstaller 6.16.0
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python -m pip install --disable-pip-version-check --only-binary=:all: 'PyInstaller==6.16.0'
+          if ($LASTEXITCODE -ne 0) { throw 'PINNED_PACKAGE_INSTALL_FAILED' }
+      - name: Copy exact Python runtime to BX isolated host and verify
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $original=(& python -c 'import sys; print(sys.prefix)').Trim()
+          $dest=Join-Path $env:LOCALAPPDATA 'BX_Python313'
+          if ([IO.Path]::GetFullPath($dest) -eq [IO.Path]::GetFullPath($original)) { throw 'NOT_ISOLATED' }
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          & robocopy $original $dest /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+          if ($LASTEXITCODE -ge 8) { throw 'PYTHON_DIRECTORY_COPY_FAILED' }
+          $py=Join-Path $dest 'python.exe'
+          if (-not (Test-Path -LiteralPath $py)) { throw 'ISOLATED_PYTHON_NOT_FOUND' }
+          & $py -c 'import os,sys,platform,PyInstaller;from pathlib import Path;expected=Path(os.environ["LOCALAPPDATA"])/"BX_Python313"/"python.exe";assert platform.system()=="Windows";assert sys.maxsize>2**32;assert tuple(sys.version_info[:3])==(3,13,16);assert PyInstaller.__version__=="6.16.0";assert Path(sys.executable).resolve()==expected.resolve(),(sys.executable,str(expected));print("ISOLATED_C0290_HOST_CONTRACT_PASS")'
+          if ($LASTEXITCODE -ne 0) { throw 'BX_HOST_CONTRACT_FAILED' }
+      - name: Build and execute public synthetic EXE with isolated interpreter
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $python=Join-Path $env:LOCALAPPDATA 'BX_Python313\python.exe'
+          $root=Join-Path $env:RUNNER_TEMP 'bx_c0357_host_trial'
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          $script=Join-Path $root 'main.py'
+          [IO.File]::WriteAllText($script,"print('BX_C0357_ISOLATED_WINDOWS_EXE_PASS')",[Text.UTF8Encoding]::new($false))
+          & $python -m PyInstaller --noconfirm --clean --onedir --name BX_C0357_Host --distpath (Join-Path $root 'dist') --workpath (Join-Path $root 'build') --specpath (Join-Path $root 'spec') $script
+          if ($LASTEXITCODE -ne 0) { throw 'ISOLATED_PYINSTALLER_BUILD_FAILED' }
+          $exe=Join-Path $root 'dist\BX_C0357_Host\BX_C0357_Host.exe'
+          if (-not (Test-Path -LiteralPath $exe)) { throw 'EXE_NOT_FOUND' }
+          $originalHash=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          foreach ($name in @('한글 공백 첫째','한글 공백 둘째')) {
+            $target=Join-Path $root $name
+            Copy-Item -LiteralPath (Join-Path $root 'dist\BX_C0357_Host') -Destination $target -Recurse -Force
+            $moved=Join-Path $target 'BX_C0357_Host.exe'
+            foreach ($i in @(1,2)) {
+              $stdout=(& $moved | Out-String).Trim()
+              if ($LASTEXITCODE -ne 0 -or $stdout -cne 'BX_C0357_ISOLATED_WINDOWS_EXE_PASS') { throw 'ISOLATED_EXE_EXEC_FAILED' }
+            }
+            if ((Get-FileHash -LiteralPath $moved -Algorithm SHA256).Hash.ToLowerInvariant() -cne $originalHash) { throw 'ISOLATED_EXE_CHANGED' }
+          }
+          $report=[ordered]@{schema='HBX_C0357_PUBLIC_ISOLATED_HOST_V1';state='PUBLIC_SYNTHETIC_ISOLATED_HOST_AND_EXE_4X_PASS_NOT_PRODUCT';github_run_id=$env:GITHUB_RUN_ID;github_run_attempt=$env:GITHUB_RUN_ATTEMPT;github_sha=$env:GITHUB_SHA;native_host_isolated=$true;python='3.13.16';pyinstaller='6.16.0';actual_windows_exe_runs=4;exe_sha256=$originalHash;product_engine_tested=$false;customer_release_approved=$false}
+          $report | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'bx_c0357_result.json') -Encoding utf8
+      - name: Upload JSON only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bx-c0357-host-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/bx_c0357_result.json
+          if-no-files-found: warn
+          retention-days: 7
