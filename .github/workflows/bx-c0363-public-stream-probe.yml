@@ -1,0 +1,56 @@
+name: BX C0363 Public Windows Inherited Stream Probe
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/bx-c0363-public-stream-probe.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inherited-stream-readback:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - name: Set Python 3.13.16
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13.16'
+          architecture: x64
+      - name: Run synthetic inherited temp-file stdout/UTF8/size probes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $target = Join-Path $env:RUNNER_TEMP 'bx_c0363_public_stream_probe.py'
+          @'
+          import json,os,sys,tempfile,subprocess,pathlib
+          outcomes=[]
+          for n in (0,7,8192,32768,131072):
+              with tempfile.TemporaryFile(mode='w+b') as stdout,tempfile.TemporaryFile(mode='w+b') as stderr:
+                  code='import sys; sys.stdout.buffer.write(("한글 공백"+("X"*'+str(n)+')).encode("utf8")); sys.stdout.flush()'
+                  proc=subprocess.run([sys.executable,'-c',code],stdout=stdout,stderr=stderr,timeout=12)
+                  if proc.returncode!=0:raise RuntimeError('CHILD_FAILED')
+                  parent_cursor=stdout.tell()
+                  size=stdout.seek(0,os.SEEK_END)
+                  stdout.seek(0)
+                  raw=stdout.read(size+1)
+                  expected=('한글 공백'+'X'*n).encode('utf8')
+                  if size!=len(expected) or raw!=expected:raise AssertionError(('FILE_CAPTURE_MISMATCH',n,size))
+                  outcomes.append(dict(payload_repeat=n,bytes_verified=len(raw),parent_cursor_before_seek=parent_cursor,seek_end_bytes=size,verified=True))
+          report={'schema':'HBX_C0363_PUBLIC_WINDOWS_STREAM_PROBE_V1','state':'PUBLIC_WINDOWS_INHERITED_STREAM_5_CASES_PASS_NOT_BX_PRODUCT',
+                  'github_run_id':os.environ.get('GITHUB_RUN_ID'),'github_run_attempt':os.environ.get('GITHUB_RUN_ATTEMPT'),
+                  'github_sha':os.environ.get('GITHUB_SHA'),'product_engine_tested':False,'private_source_used':False,
+                  'customer_release_approved':False,'windows_real_process_cases':len(outcomes),'cases':outcomes}
+          artifact=pathlib.Path(os.environ['RUNNER_TEMP'])/'bx_c0363_public_stream_result.json'
+          artifact.write_text(json.dumps(report,sort_keys=True,ensure_ascii=False,indent=2),encoding='utf8')
+          print(json.dumps({'status':report['state'],'cases':len(outcomes),'cursor_readings':[x['parent_cursor_before_seek'] for x in outcomes]}))
+          '@ | Set-Content -LiteralPath $target -Encoding utf8
+          python $target
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_INHERITED_STREAM_PROBE_FAILED' }
+      - name: Upload bounded public JSON only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bx-c0363-stream-${{ github.run_id }}
+          path: ${{ runner.temp }}/bx_c0363_public_stream_result.json
+          if-no-files-found: warn
+          retention-days: 7
