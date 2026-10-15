@@ -1,0 +1,149 @@
+name: BX C0362 Public Isolated Host 3 Builds 12 Runs
+# Synthetic public only; verify isolated host + 3 real EXEs + 12 runs, no BX private source.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bx-c0362-public-isolated-3x12.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  public-native-3x12:
+    if: ${{ github.repository == 'nineeye/bx-oss-build-lab' }}
+    runs-on: windows-2025
+    timeout-minutes: 50
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: '1'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+    steps:
+      - name: Checkout fixed public fixture files
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Python 3.13.16
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13.16'
+          architecture: x64
+      - name: Install public pinned PyInstaller 6.16.0
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --only-binary=:all: 'PyInstaller==6.16.0'
+          if ($LASTEXITCODE -ne 0) { throw 'PINNED_PYINSTALLER_INSTALL_FAILED' }
+      - name: Copy Python and pinned PyInstaller into BX isolated native host
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $pythonRoot=(& python -c 'import sys; print(sys.prefix)').Trim()
+          $target=Join-Path $env:LOCALAPPDATA 'BX_Python313'
+          New-Item -ItemType Directory -Force -Path $target | Out-Null
+          & robocopy $pythonRoot $target /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+          if ($LASTEXITCODE -ge 8) { throw 'ISOLATED_HOST_COPY_FAILED' }
+          $isopy=Join-Path $target 'python.exe'
+          & $isopy -c 'import os,sys,platform,PyInstaller;from pathlib import Path;p=Path(os.environ["LOCALAPPDATA"])/"BX_Python313"/"python.exe";assert sys.executable.lower()==str(p).lower();assert platform.system()=="Windows";assert tuple(sys.version_info[:3])==(3,13,16);assert PyInstaller.__version__=="6.16.0";print("C0362_BX_NATIVE_ISOLATED_HOST_READY")'
+          if ($LASTEXITCODE -ne 0) { throw 'ISOLATED_HOST_VALIDATION_FAILED' }
+      - name: Build 3 real Windows EXEs and execute 12 fixed public cases
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $isolated=Join-Path $env:LOCALAPPDATA 'BX_Python313\python.exe'
+          if (-not (Test-Path -LiteralPath $isolated)) { throw 'ISOLATED_HOST_MISSING' }
+          $base = Join-Path $env:GITHUB_WORKSPACE 'public_samples/c0331_workflows'
+          $work = Join-Path $env:RUNNER_TEMP 'bx_c0362_isolated_business'
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          $gold = @{
+            order_invoice=@{ 'result.csv'='f7970c15266ef9e9a05e7a1781ad00717b42ea823942aeb35eec89f9dbb59225' }
+            inventory_report=@{ 'result.csv'='0071eef6fb65ce4400e8774fc580e2b2337aecac78420c5e0f25543331e98c27' }
+            document_bundle=@{ 'C001.txt'='37222018a9cb0c86c772a730b0d63736fd03ce67b759598f66c99a356e0ed535'; 'C002.txt'='bac9b4e1b5149977013f75f1e73e025223a1ac8de7cdf4ce15cbff33650a95f9' }
+          }
+          $expectedSrc = @{
+            order_invoice=@{ 'main.py'='e10cb45662cade86fbe2f2cc31e1d6a9aef085249ff813f03621da047e0cab7d'; 'data/orders.csv'='ddfabe9c2e70f0c82facd7a4ea33e6b4f406ccc53e2b5fbc5d34a241eac59b24' }
+            inventory_report=@{ 'main.py'='a2e35bcdfad388e7215195df9ceb043542038edca4685c3e7af7052019d26125'; 'data/settings.json'='9ee79f86e810d1f9bd5ea568fb1dcaf6f3cf8868b15b8e2c95feb0f0b92d8299'; 'data/stock.csv'='ba8716a95356fb34f433a43bc8e09d920e29176705887ff2e0952e66e435ac0d' }
+            document_bundle=@{ 'main.py'='e7beff0974396bfe6923df0d728ad60fdc477107b8374f83570558cc9dd7c013'; 'data/customers.csv'='3859e771d26ebac6fd58a567ece27b3feccfd296d120bd6eec3c7ce6225bb525'; 'data/notice.txt'='1d74ae358fecad57731d83eda20e061241f28ca52dad92a12ff24f577759237a' }
+          }
+          $report = [ordered]@{
+            schema='HBX_C0362_ISOLATED_PUBLIC_NATIVE_3X12_V1'
+            state='RUNNING_NOT_RELEASE'
+            github_run_id=$env:GITHUB_RUN_ID
+            github_run_attempt=$env:GITHUB_RUN_ATTEMPT
+            github_sha=$env:GITHUB_SHA
+            product_engine_tested=$false
+            isolated_native_host_verified=$true
+            isolated_host_path_is_localappdata=$true
+            public_synthetic_fixtures_only=$true
+            customer_release_approved=$false
+            cases=@()
+          }
+          try {
+            foreach ($case in @('order_invoice','inventory_report','document_bundle')) {
+              $sourceDir = Join-Path $base $case
+              $src = Join-Path $sourceDir 'main.py'
+              $actualNames = @(Get-ChildItem -LiteralPath $sourceDir -Recurse -File | ForEach-Object { [IO.Path]::GetRelativePath($sourceDir,$_.FullName).Replace('\','/') })
+              $expectedNames = @($expectedSrc[$case].Keys)
+              if (@(Compare-Object $actualNames $expectedNames).Count -ne 0) { throw "SOURCE_FILE_LIST_MISMATCH_$case" }
+              foreach ($relative in $expectedNames) {
+                $fp = Join-Path $sourceDir $relative
+                $actualHash = (Get-FileHash -LiteralPath $fp -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($actualHash -cne $expectedSrc[$case][$relative]) { throw "SOURCE_SHA_MISMATCH_$case" }
+              }
+              $appName = "BX_C0362_$case"
+              $caseWork = Join-Path $work $case
+              New-Item -ItemType Directory -Force -Path $caseWork | Out-Null
+              $dataArg = (Join-Path $sourceDir 'data') + ';data'
+              & $isolated -m PyInstaller --clean --noconfirm --onedir --name $appName --add-data $dataArg --distpath (Join-Path $caseWork 'dist') --workpath (Join-Path $caseWork 'build') --specpath (Join-Path $caseWork 'spec') $src
+              if ($LASTEXITCODE -ne 0) { throw "NATIVE_BUILD_FAILED_$case" }
+              $built = Join-Path $caseWork "dist/$appName"
+              $exe = Join-Path $built ($appName+'.exe')
+              if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "BUILT_EXE_MISSING_$case" }
+              $exeHash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+              $runs = @()
+              foreach ($slot in @(1,2)) {
+                $dest = Join-Path $caseWork ("한글 공백 위치 "+$slot)
+                Copy-Item -LiteralPath $built -Destination $dest -Recurse -Force
+                $destExe = Join-Path $dest ($appName+'.exe')
+                if ((Get-FileHash -LiteralPath $destExe -Algorithm SHA256).Hash.ToLowerInvariant() -cne $exeHash) { throw "RELOCATED_EXE_CHANGED_$case" }
+                foreach ($iteration in @(1,2)) {
+                  $outFolder = Join-Path $caseWork ("업무 결과 "+$slot+" "+$iteration)
+                  $output = if ($case -eq 'document_bundle') { $outFolder } else { Join-Path $outFolder 'result.csv' }
+                  $rawOut = (& $destExe --output $output | Out-String).Trim()
+                  if ($LASTEXITCODE -ne 0) { throw "NATIVE_RUNTIME_EXIT_NONZERO_$case" }
+                  $result = $rawOut | ConvertFrom-Json
+                  if ($case -eq 'order_invoice') {
+                    if ($result.kind -cne 'invoice' -or $result.rows -ne 3 -or $result.amount -cne '6962.00') { throw 'INVOICE_STDOUT_FAILED' }
+                  } elseif ($case -eq 'inventory_report') {
+                    if ($result.kind -cne 'reorder' -or $result.rows -ne 2 -or $result.reorder_total -ne 17) { throw 'INVENTORY_STDOUT_FAILED' }
+                  } else {
+                    if ($result.kind -cne 'document' -or $result.rows -ne 2 -or @($result.names).Count -ne 2 -or $result.names[0] -cne 'C001.txt' -or $result.names[1] -cne 'C002.txt') { throw 'DOCUMENT_STDOUT_FAILED' }
+                  }
+                  $actualOutputs=@(Get-ChildItem -LiteralPath $outFolder -File | Select-Object -ExpandProperty Name)
+                  if (@(Compare-Object $actualOutputs @($gold[$case].Keys)).Count -ne 0) { throw "OUTPUT_SET_CHANGED_$case" }
+                  foreach ($file in @($gold[$case].Keys)) {
+                    $digest=(Get-FileHash -LiteralPath (Join-Path $outFolder $file) -Algorithm SHA256).Hash.ToLowerInvariant()
+                    if ($digest -cne $gold[$case][$file]) { throw "GOLDEN_OUTPUT_FAILED_$case" }
+                  }
+                  $runs+=@{ unicode_slot=$slot;iteration=$iteration;golden_outputs_ok=$true;exe_sha256=$exeHash }
+                }
+              }
+              foreach ($relative in $expectedNames) {
+                $fp=Join-Path $sourceDir $relative
+                if ((Get-FileHash -LiteralPath $fp -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedSrc[$case][$relative]) { throw "INPUT_MODIFIED_$case" }
+              }
+              $report.cases+=@{ name=$case;exe_sha256=$exeHash;executions=$runs;output_golden_verified=$true }
+            }
+            if (@($report.cases).Count -ne 3) { throw 'MISSING_CASES' }
+            $report.state='PUBLIC_SYNTHETIC_ISOLATED_HOST_3_EXES_12_RUNS_PASS_NOT_PRODUCT'
+          } finally {
+            $path=Join-Path $env:RUNNER_TEMP 'bx_c0362_isolated_public_result.json'
+            $report | ConvertTo-Json -Depth 9 | Set-Content -LiteralPath $path -Encoding utf8
+          }
+      - name: Upload bounded JSON evidence only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bx-c0362-isolated-3x12-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/bx_c0362_isolated_public_result.json
+          if-no-files-found: warn
+          retention-days: 7
