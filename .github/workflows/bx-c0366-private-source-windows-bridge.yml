@@ -45,7 +45,7 @@ jobs:
           PRIVATE_KIT_SHA: ${{ inputs.private_kit_sha256 }}
         run: |
           $ErrorActionPreference='Stop'
-          if ($env:PRIVATE_REPO -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw 'PRIVATE_REPO_REFERENCE_MISSING' }
+          if ($env:PRIVATE_REPO -cne 'nineeye/afo-release-factory-build') { throw 'PRIVATE_REPO_REFERENCE_MISSING' }
           if ($env:PRIVATE_COMMIT -cnotmatch '^[0-9a-f]{40}$') { throw 'IMMUTABLE_COMMIT_SHA_REQUIRED' }
           if ($env:PRIVATE_KIT_SHA -cnotmatch '^[0-9a-f]{64}$') { throw 'IMMUTABLE_ZIP_HASH_REQUIRED' }
       - name: Read only private repository checkout in disposable Windows workspace
@@ -56,6 +56,9 @@ jobs:
           token: ${{ secrets.BX_PRIVATE_READ_PAT }}
           persist-credentials: false
           fetch-depth: 1
+          sparse-checkout: |
+            C0365_PRIVATE_NATIVE_RUNNER.zip
+          sparse-checkout-cone-mode: false
           path: private_checkout
       - name: Verify private visibility and exact commit without listing source
         shell: pwsh
