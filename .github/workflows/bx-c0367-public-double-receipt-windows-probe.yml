@@ -1,0 +1,109 @@
+name: BX C0367 Public Windows Double Receipt Guard Probe
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/bx-c0367-public-double-receipt-windows-probe.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic-receipt:
+    runs-on: windows-2025
+    timeout-minutes: 12
+    steps:
+      - name: Validate synthetic local vs stdout receipt and reject tampering on Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $d=Join-Path $env:RUNNER_TEMP 'bx_c0367_synth_receipt'
+          New-Item -ItemType Directory -Force -Path $d | Out-Null
+          $receipt=Join-Path $d 'BX_C0365_syn.json'
+          $raw=Join-Path $d 'stdout.json'
+          $report=[ordered]@{
+            schema='HBX_C0365_PRIVATE_NATIVE_DURABLE_GATE_V1'
+            state='PRIVATE_BX_WINDOWS_3X12_SELF_REPORT_WITH_LOCAL_RECEIPT_NOT_SALES'
+            phase='COMPLETED'
+            reason_code=''
+            actual_windows_builds=3
+            actual_windows_exe_runs=12
+            durable_local_receipt=$true
+            native_runner_invoked=$true
+            private_bx_engine_executed=$true
+            private_bx_native_pass_self_reported=$true
+            customer_release_approved=$false
+            independent_windows_attestation=$false
+            sales_gates_passed=0
+            external_customer_projects_tested=0
+          }
+          function Save-Case($body) {
+            [IO.File]::WriteAllText($receipt,(ConvertTo-Json -InputObject $body -Depth 20 -Compress),[Text.UTF8Encoding]::new($false))
+            $sha=(Get-FileHash -LiteralPath $receipt -Algorithm SHA256).Hash.ToLowerInvariant()
+            $combined=[ordered]@{}
+            foreach ($key in $body.Keys) { $combined[$key]=$body[$key] }
+            $combined['local_receipt_sha256']=$sha
+            [IO.File]::WriteAllText($raw,(ConvertTo-Json -InputObject $combined -Depth 20 -Compress),[Text.UTF8Encoding]::new($false))
+          }
+          function Assert-DoubleReceipt() {
+            if ((Get-Item -LiteralPath $receipt).Length -gt 8192 -or (Get-Item -LiteralPath $raw).Length -gt 16384) { throw 'SIZE_LIMIT' }
+            $receiptSha=(Get-FileHash -LiteralPath $receipt -Algorithm SHA256).Hash.ToLowerInvariant()
+            $stdoutDoc=Get-Content -LiteralPath $raw -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+            $diskDoc=Get-Content -LiteralPath $receipt -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+            if ([string]$stdoutDoc['local_receipt_sha256'] -cne $receiptSha) { throw 'SHA_MISMATCH' }
+            [void]$stdoutDoc.Remove('local_receipt_sha256')
+            if ((ConvertTo-Json -InputObject $stdoutDoc -Compress -Depth 20) -cne (ConvertTo-Json -InputObject $diskDoc -Compress -Depth 20)) { throw 'BODY_MISMATCH' }
+            if ($diskDoc['schema'] -cne 'HBX_C0365_PRIVATE_NATIVE_DURABLE_GATE_V1' -or
+                $diskDoc['state'] -cne 'PRIVATE_BX_WINDOWS_3X12_SELF_REPORT_WITH_LOCAL_RECEIPT_NOT_SALES' -or
+                $diskDoc['phase'] -cne 'COMPLETED' -or
+                $diskDoc['reason_code'] -cne '' -or
+                $diskDoc['actual_windows_builds'] -ne 3 -or
+                $diskDoc['actual_windows_exe_runs'] -ne 12 -or
+                $diskDoc['durable_local_receipt'] -cne $true -or
+                $diskDoc['native_runner_invoked'] -cne $true -or
+                $diskDoc['private_bx_engine_executed'] -cne $true -or
+                $diskDoc['private_bx_native_pass_self_reported'] -cne $true -or
+                $diskDoc['customer_release_approved'] -cne $false -or
+                $diskDoc['independent_windows_attestation'] -cne $false -or
+                $diskDoc['sales_gates_passed'] -ne 0 -or
+                $diskDoc['external_customer_projects_tested'] -ne 0) { throw 'CONTRACT_INVALID' }
+          }
+          Save-Case $report
+          Assert-DoubleReceipt
+          $checks=1
+          $modified=Get-Content -LiteralPath $raw -Raw | ConvertFrom-Json -AsHashtable
+          $modified['actual_windows_exe_runs']=99
+          [IO.File]::WriteAllText($raw,(ConvertTo-Json -InputObject $modified -Compress),[Text.UTF8Encoding]::new($false))
+          $caught=$false
+          try { Assert-DoubleReceipt } catch { $caught=$true }
+          if (-not $caught) { throw 'FAILED_TO_REJECT_STDOUT_TAMPER' }
+          $checks++
+          Save-Case $report
+          $bytes=[IO.File]::ReadAllBytes($receipt)
+          $bytes[0]=([byte]($bytes[0] -bxor 1))
+          [IO.File]::WriteAllBytes($receipt,$bytes)
+          $caught=$false
+          try { Assert-DoubleReceipt } catch { $caught=$true }
+          if (-not $caught) { throw 'FAILED_TO_REJECT_RECEIPT_TAMPER' }
+          $checks++
+          Save-Case $report
+          $report['customer_release_approved']=$true
+          Save-Case $report
+          $caught=$false
+          try { Assert-DoubleReceipt } catch { $caught=$true }
+          if (-not $caught) { throw 'FAILED_TO_REJECT_FALSE_SALES_APPROVAL' }
+          $checks++
+          $proof=[ordered]@{schema='HBX_C0367_PUBLIC_WINDOWS_DOUBLE_RECEIPT_PROBE_V1'
+            github_run_id=$env:GITHUB_RUN_ID;github_run_attempt=$env:GITHUB_RUN_ATTEMPT
+            github_sha=$env:GITHUB_SHA;synthetic_checks=$checks;checks_passed=$checks
+            public_synthetic_only=$true;private_source_accessed=$false
+            proprietary_bx_engine_executed=$false;independent_attestation=$false
+            customer_release_approved=$false}
+          $proof | ConvertTo-Json -Depth 2 | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'bx_c0367_public_evidence.json') -Encoding utf8
+          Write-Output 'C0367_PUBLIC_WINDOWS_DOUBLE_RECEIPT_4_OF_4_PASS'
+      - name: Upload synthetic bounded JSON
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bx-c0367-public-receipt-${{ github.run_id }}
+          path: ${{ runner.temp }}/bx_c0367_public_evidence.json
+          if-no-files-found: warn
+          retention-days: 7
