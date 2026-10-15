@@ -160,13 +160,13 @@ jobs:
               if (-not ($stdoutDoc -is [System.Collections.IDictionary]) -or -not ($diskDoc -is [System.Collections.IDictionary])) { throw 'RECEIPT_INVALID_JSON' }
               if ([string]$stdoutDoc['local_receipt_sha256'] -cne $receiptSha) { throw 'DOUBLE_RECEIPT_SHA_MISMATCH' }
               [void]$stdoutDoc.Remove('local_receipt_sha256')
-              if (($stdoutDoc | ConvertTo-Json -Compress -Depth 20) -cne ($diskDoc | ConvertTo-Json -Compress -Depth 20)) { throw 'DOUBLE_RECEIPT_CONTENT_MISMATCH' }
+              if ((ConvertTo-Json -InputObject $stdoutDoc -Compress -Depth 20) -cne (ConvertTo-Json -InputObject $diskDoc -Compress -Depth 20)) { throw 'DOUBLE_RECEIPT_CONTENT_MISMATCH' }
               $d=$diskDoc
               if ($d['schema'] -ceq 'HBX_C0365_PRIVATE_NATIVE_DURABLE_GATE_V1' -and
                   $d['state'] -ceq 'PRIVATE_BX_WINDOWS_3X12_SELF_REPORT_WITH_LOCAL_RECEIPT_NOT_SALES' -and
                   $d['phase'] -ceq 'COMPLETED' -and $d['reason_code'] -ceq '' -and
-                  $d['actual_windows_builds'] -is [int] -and $d['actual_windows_builds'] -eq 3 -and
-                  $d['actual_windows_exe_runs'] -is [int] -and $d['actual_windows_exe_runs'] -eq 12 -and
+                  ($d['actual_windows_builds'] -is [int] -or $d['actual_windows_builds'] -is [long]) -and $d['actual_windows_builds'] -eq 3 -and
+                  ($d['actual_windows_exe_runs'] -is [int] -or $d['actual_windows_exe_runs'] -is [long]) -and $d['actual_windows_exe_runs'] -eq 12 -and
                   $d['durable_local_receipt'] -ceq $true -and $d['native_runner_invoked'] -ceq $true -and
                   $d['private_bx_engine_executed'] -ceq $true -and $d['private_bx_native_pass_self_reported'] -ceq $true -and
                   $d['customer_release_approved'] -ceq $false -and $d['independent_windows_attestation'] -ceq $false -and
