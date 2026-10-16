@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   native-linux:
-    if: ${{ github.repository == 'nineeye/bx-oss-build-lab' && github.actor == 'nineeye' && inputs.approval == 'I_APPROVE_C0260_REAL_OSS_BUILD' }}
+    if: ${{ false }} # C0411 zero-cost freeze: historical workflow disabled
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
