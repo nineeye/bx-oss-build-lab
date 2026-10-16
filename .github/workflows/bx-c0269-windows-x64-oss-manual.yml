@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   native-windows-x64:
-    if: ${{ github.repository == 'nineeye/bx-oss-build-lab' && github.actor == 'nineeye' }}
+    if: ${{ false }} # C0411 zero-cost freeze: historical workflow disabled
     runs-on: windows-2025
     timeout-minutes: 50
     defaults:
