@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   source-native-build:
-    if: \${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' }}
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' }}
     runs-on: windows-2025
     timeout-minutes: 15
     strategy:
@@ -39,5 +39,5 @@ jobs:
           PIP_NO_INPUT: '1'
           PIP_DISABLE_PIP_VERSION_CHECK: '1'
         run: |
-          python .github/scripts/bx-c0428-ultra10.py \${{ matrix.ultra }}
-          if ($LASTEXITCODE -ne 0) { throw "ULTRA10_NATIVE_BUILD_BLOCKED_\${{ matrix.ultra }}" }
+          python .github/scripts/bx-c0428-ultra10.py ${{ matrix.ultra }}
+          if ($LASTEXITCODE -ne 0) { throw "ULTRA10_NATIVE_BUILD_BLOCKED_${{ matrix.ultra }}" }
