@@ -1,0 +1,105 @@
+name: BX C0407 Public Python Engine Windows Build (Manual)
+# Public synthetic code only; never checkout or upload BX private/customer sources.
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        type: string
+        required: true
+        description: "Type I_APPROVE_BX_C0407_ENGINES; Windows runner minutes may incur charges"
+      engine:
+        type: choice
+        options: [pyinstaller, nuitka, cx-freeze]
+        required: true
+permissions:
+  contents: read
+jobs:
+  build:
+    if: ${{ github.actor == 'nineeye' && inputs.approval == 'I_APPROVE_BX_C0407_ENGINES' }}
+    runs-on: windows-2025
+    timeout-minutes: 75
+    steps:
+      - name: Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Real build and Korean-path functional verification
+        shell: pwsh
+        timeout-minutes: 70
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: 'utf-8'
+          PIP_NO_INPUT: '1'
+        run: |
+          $ErrorActionPreference='Stop'
+          $engine='${{ inputs.engine }}'
+          $receiptPath=Join-Path $env:RUNNER_TEMP 'bx-c0407-engine-result.json'
+          $stage='PREPARE';$status='FAIL';$reason='NOT_COMPLETED'
+          $seconds=0.0;$sha='';$exeBytes=0;$folderBytes=0;$started=$false
+          try {
+            $stage='PYTHON_PREP'
+            $code=@'
+          import csv,decimal,hashlib,io,json,zipfile
+          rows=[('볼트A','3','15700'),('상자B','2','8300'),('나사C','10','240')]
+          total=sum(decimal.Decimal(q)*decimal.Decimal(p) for _,q,p in rows)
+          assert total==66100
+          buff=io.StringIO(newline='')
+          writer=csv.writer(buff);writer.writerow(('품목','수량','단가'));writer.writerows(rows)
+          encoded=buff.getvalue().encode('utf-8-sig')
+          out=io.BytesIO()
+          with zipfile.ZipFile(out,'w') as z:z.writestr('order.csv',encoded)
+          with zipfile.ZipFile(io.BytesIO(out.getvalue())) as z:assert z.read('order.csv')==encoded
+          print('BX_C0406_BUSINESS_SAMPLE_PASS',json.dumps({'rows':3,'total':int(total),'sha256':hashlib.sha256(encoded).hexdigest()},sort_keys=True))
+          '@
+            [IO.File]::WriteAllText((Join-Path (Get-Location) 'bx_sample.py'),$code,[Text.UTF8Encoding]::new($false))
+            $baseline=(& python bx_sample.py | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or -not $baseline.StartsWith('BX_C0406_BUSINESS_SAMPLE_PASS ')) {throw 'SOURCE_FAILED'}
+            $stage='INSTALL_ENGINE'
+            if ($engine -eq 'pyinstaller') { python -m pip install 'PyInstaller==6.22.3' }
+            elseif ($engine -eq 'nuitka') { python -m pip install 'Nuitka==4.3' ordered-set zstandard }
+            elseif ($engine -eq 'cx-freeze') { python -m pip install 'cx-Freeze==8.7.2' }
+            else {throw 'UNKNOWN_ENGINE'}
+            if ($LASTEXITCODE -ne 0) {throw 'INSTALL_FAILED'}
+            $stage='REAL_NATIVE_BUILD';$started=$true
+            $watch=[Diagnostics.Stopwatch]::StartNew()
+            if ($engine -eq 'pyinstaller') { python -m PyInstaller --noconfirm --clean --onedir --name bx_sample bx_sample.py }
+            elseif ($engine -eq 'nuitka') { python -m nuitka --mode=standalone --msvc=latest --output-dir=dist bx_sample.py }
+            else { cxfreeze --script=bx_sample.py --target-name=bx_sample --target-dir=dist/cx_sample }
+            $buildExit=$LASTEXITCODE
+            $watch.Stop();$seconds=[Math]::Max(0.01,[Math]::Round($watch.Elapsed.TotalSeconds,2))
+            if ($buildExit -ne 0) {throw 'BUILD_FAILED'}
+            $stage='VERIFY_NATIVE_EXE'
+            $found=@(Get-ChildItem -LiteralPath dist -Recurse -File -Filter bx_sample.exe)
+            if ($found.Count -ne 1) {throw 'EXE_NOT_UNIQUE'}
+            $exe=$found[0]
+            $sha=(Get-FileHash -LiteralPath $exe.FullName -Algorithm SHA256).Hash
+            $exeBytes=[long]$exe.Length
+            $folder=$exe.Directory.FullName
+            $folderBytes=[long]((Get-ChildItem -LiteralPath $folder -File -Recurse | Measure-Object -Property Length -Sum).Sum)
+            $stage='RELOCATED_KOREAN_PATH_RUNTIME'
+            $destination=Join-Path $env:RUNNER_TEMP '한글 and spaces'
+            New-Item -Path $destination -Force -ItemType Directory | Out-Null
+            Copy-Item -Path (Join-Path $folder '*') -Destination $destination -Recurse -Force
+            $moved=Join-Path $destination 'bx_sample.exe'
+            if (-not (Test-Path -LiteralPath $moved -PathType Leaf)) {throw 'MOVED_EXE_MISSING'}
+            $actual=(& $moved 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or $actual -ne $baseline) {throw 'EXE_OUTPUT_MISMATCH'}
+            if ((Get-FileHash -LiteralPath $moved -Algorithm SHA256).Hash -ne $sha) {throw 'EXE_HASH_MISMATCH'}
+            $status='PASS';$reason='SOURCE_AND_RELOCATED_EXE_MATCH'
+          } catch {
+            $reason=($_.Exception.Message -replace '[^A-Za-z0-9_]','_')
+          } finally {
+            $receipt=[ordered]@{schema='BX_C0406_PUBLIC_ENGINE_BENCH_V1';engine=$engine;status=$status;last_stage=$stage;reason=$reason;build_seconds=$seconds;exe_sha256=$sha;exe_bytes=$exeBytes;folder_bytes=$folderBytes;real_windows_build_attempted=$started;public_synthetic_only=$true;private_bx_engine_tested=$false;customer_release_approved=$false;github_run_id=$env:GITHUB_RUN_ID;github_run_attempt=$env:GITHUB_RUN_ATTEMPT}
+            $receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $receiptPath -Encoding utf8
+            Write-Host ('ENGINE={0} STATUS={1} STAGE={2} REASON={3}' -f $engine,$status,$stage,$reason)
+            if ($status -ne 'PASS') {throw ('BX_ENGINE_{0}_{1}_{2}' -f $engine,$stage,$reason)}
+          }
+      - name: Save limited public receipt only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bx-c0407-public-engine-${{ inputs.engine }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/bx-c0407-engine-result.json
+          retention-days: 7
+          if-no-files-found: warn
