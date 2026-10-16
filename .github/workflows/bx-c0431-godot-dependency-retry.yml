@@ -1,0 +1,55 @@
+name: BX C0431 Godot Module Dependency Native Retry
+# Public pinned Godot source, real native build, no private source, no paid runner.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bx-c0431-godot-dependency-retry.yml
+permissions:
+  contents: read
+jobs:
+  godot-native:
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' }}
+    runs-on: windows-2025
+    timeout-minutes: 16
+    steps:
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Build actual Godot headless Windows EXE
+        shell: pwsh
+        timeout-minutes: 15
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: utf-8
+          PIP_NO_INPUT: '1'
+          EXPECTED_GODOT_COMMIT: '4d10419cacd6d3009976e8f9fd3abd970fd58018'
+        run: |
+          $ErrorActionPreference='Stop'
+          $stage='CLONE'
+          try {
+            git -c core.longpaths=true clone --depth 1 --filter=blob:none https://github.com/godotengine/godot.git godot-src
+            if ($LASTEXITCODE -ne 0) { throw 'GODOT_SOURCE_FETCH_FAIL' }
+            $commit=(& git -C godot-src rev-parse HEAD | Out-String).Trim()
+            Write-Host ('BX_C0431_GODOT_COMMIT ' + $commit)
+            if ($commit -cne $env:EXPECTED_GODOT_COMMIT) {throw 'GODOT_SOURCE_COMMIT_DRIFT'}
+            $stage='INSTALL'
+            python -m pip install --disable-pip-version-check 'SCons==4.11.1' 'zstandard==0.25.0'
+            if ($LASTEXITCODE -ne 0) { throw 'GODOT_INSTALL_FAIL' }
+            $stage='NATIVE_COMPILE'
+            Push-Location godot-src
+            try {
+              $clock=[Diagnostics.Stopwatch]::StartNew()
+              python -m SCons platform=windows target=template_release arch=x86_64 lto=none accesskit=no d3d12=no angle=no disable_3d=yes disable_advanced_gui=yes module_text_server_adv_enabled=no module_text_server_fb_enabled=yes modules_enabled_by_default=no module_freetype_enabled=yes module_msdfgen_enabled=yes module_svg_enabled=yes -j4
+              if ($LASTEXITCODE -ne 0) { throw 'GODOT_NATIVE_COMPILE_FAIL' }
+              $clock.Stop()
+              $exe=Get-ChildItem -Path bin -Filter 'godot.windows.template_release*.exe' -File | Select-Object -First 1
+              if (-not $exe) { throw 'GODOT_EXE_MISSING' }
+              $stage='NATIVE_RUNTIME'
+              & $exe.FullName --headless --version
+              if ($LASTEXITCODE -ne 0) {throw 'GODOT_REAL_WINDOWS_EXE_FAILED'}
+              $proof=[ordered]@{schema='BX_C0431_GODOT_NATIVE_WINDOWS_V1';result='PASS_NATIVE_EXE';github_run_id=$env:GITHUB_RUN_ID;upstream_sha=$commit;build_seconds=[Math]::Round($clock.Elapsed.TotalSeconds,2);exe_sha256=(Get-FileHash -LiteralPath $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant();exe_bytes=$exe.Length;headless_version=$true;full_godot_editor_certified=$false;private_bx_certified=$false}
+              Write-Host ('BX_C0431_GODOT_PROOF ' + ($proof | ConvertTo-Json -Compress))
+            } finally { Pop-Location }
+          } finally { Write-Host ('BX_C0431_GODOT_STAGE '+$stage) }
