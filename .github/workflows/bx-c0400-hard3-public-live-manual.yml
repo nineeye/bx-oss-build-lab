@@ -62,7 +62,10 @@ jobs:
               if ($LASTEXITCODE -ne 0) { throw 'NAPARI_BUILD_FAIL' }
               $stage='NAPARI_EXE_FUNCTIONAL'
               $output=& .\dist\BX_napari\BX_napari.exe 2>&1 | Out-String
-              if ($LASTEXITCODE -ne 0 -or !$output.Contains('BX_NAPARI_FUNCTIONAL_PASS')) { throw 'NAPARI_EXE_FUNCTIONAL_FAIL' }
+              $exeCode=$LASTEXITCODE
+              Write-Host "NAPARI_EXE_EXIT_CODE=$exeCode"
+              Write-Host "NAPARI_EXE_SUCCESS_TOKEN_FOUND=$($output.Contains('BX_NAPARI_FUNCTIONAL_PASS'))"
+              if ($exeCode -ne 0 -or !$output.Contains('BX_NAPARI_FUNCTIONAL_PASS')) { throw 'NAPARI_EXE_FUNCTIONAL_FAIL' }
               $status='PASS'
             }
             elseif ($case -eq 'ocrmypdf') {
