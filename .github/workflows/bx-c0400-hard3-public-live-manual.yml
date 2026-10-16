@@ -65,7 +65,14 @@ jobs:
               $exeCode=$LASTEXITCODE
               Write-Host "NAPARI_EXE_EXIT_CODE=$exeCode"
               Write-Host "NAPARI_EXE_SUCCESS_TOKEN_FOUND=$($output.Contains('BX_NAPARI_FUNCTIONAL_PASS'))"
-              if ($exeCode -ne 0 -or !$output.Contains('BX_NAPARI_FUNCTIONAL_PASS')) { throw 'NAPARI_EXE_FUNCTIONAL_FAIL' }
+              if ($exeCode -ne 0 -or !$output.Contains('BX_NAPARI_FUNCTIONAL_PASS')) {
+                $safeOutput=$output -replace '(?i)gh[pousr]_[a-z0-9_]+','[REDACTED]' -replace '(?i)github_pat_[a-z0-9_]+','[REDACTED]'
+                $start=[Math]::Max(0,$safeOutput.Length-3500)
+                Write-Host 'NAPARI_EXE_OUTPUT_TAIL_BEGIN'
+                Write-Host $safeOutput.Substring($start)
+                Write-Host 'NAPARI_EXE_OUTPUT_TAIL_END'
+                throw 'NAPARI_EXE_FUNCTIONAL_FAIL'
+              }
               $status='PASS'
             }
             elseif ($case -eq 'ocrmypdf') {
