@@ -39,12 +39,16 @@ jobs:
           os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
           import numpy as np
           import napari
+          print('BX_NAPARI_STAGE_IMPORT_OK',flush=True)
           viewer=napari.Viewer(show=False)
+          print('BX_NAPARI_STAGE_VIEWER_CREATED',flush=True)
           layer=viewer.add_image(np.arange(100,dtype=np.uint8).reshape(10,10))
           assert tuple(layer.data.shape)==(10,10)
           assert int(layer.data[9,9])==99
+          print('BX_NAPARI_STAGE_IMAGE_VERIFIED',flush=True)
           viewer.close()
-          print('BX_NAPARI_FUNCTIONAL_PASS')
+          print('BX_NAPARI_STAGE_VIEWER_CLOSED',flush=True)
+          print('BX_NAPARI_FUNCTIONAL_PASS',flush=True)
           '@
           [System.IO.File]::WriteAllText((Join-Path (Get-Location) 'napari_probe.py'),$publicCode,[System.Text.UTF8Encoding]::new($false))
       - name: Run original Python functional test
@@ -61,6 +65,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
+          $env:QT_DEBUG_PLUGINS='1'
           $exe=Join-Path (Get-Location) 'dist\BX_napari\BX_napari.exe'
           if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'NAPARI_EXE_NOT_FOUND' }
           $before=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
