@@ -10,7 +10,7 @@ permissions:
   contents: read
 jobs:
   public-smoke:
-    if: ${{ inputs.approval == 'I_APPROVE_BX_C0347_PUBLIC_SYNTHETIC' }}
+    if: ${{ false }} # C0411 freeze old workflow to avoid billing/storage risk
     runs-on: windows-2025
     timeout-minutes: 40
     steps:
