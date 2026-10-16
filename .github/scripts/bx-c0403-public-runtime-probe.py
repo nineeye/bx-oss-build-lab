@@ -45,6 +45,30 @@ def read_tail(filename: Path, length: int = 32768) -> tuple[str,int]:
     return raw.decode('utf-8','replace'),size
 
 
+def marker_is_exact_line(filename: Path) -> bool:
+    """Find the full PASS line even when huge output pushes it out of the tail."""
+    marker = PASS_MARKER.encode('utf-8')
+    pending = bytearray()
+    overlong = False
+    with filename.open('rb') as f:
+        while True:
+            chunk = f.read(64 * 1024)
+            if not chunk:
+                break
+            fragments = chunk.split(b'\n')
+            for n,part in enumerate(fragments):
+                if not overlong:
+                    if len(pending) + len(part) <= len(marker) + 2:
+                        pending.extend(part)
+                    else:
+                        overlong = True
+                if n < len(fragments)-1:
+                    if not overlong and pending.rstrip(b'\r') == marker:
+                        return True
+                    pending.clear(); overlong = False
+    return not overlong and pending.rstrip(b'\r') == marker
+
+
 def kill_tree(proc: subprocess.Popen) -> None:
     if proc.poll() is not None: return
     if os.name == 'nt':
@@ -87,7 +111,7 @@ def evaluate(mode: str, target: Path, *, timeout_seconds: int = 120) -> tuple[di
         err,size_err=read_tail(err_file)
         result['stdout_size_bytes']=size_out
         result['stderr_size_bytes']=size_err
-        result['success_marker_seen']=PASS_MARKER in std
+        result['success_marker_seen']=marker_is_exact_line(out_file)
         combined=std+'\n'+err
         result['categories']=[name for name,pattern in CATEGORIES if pattern.search(combined)]
         if result['reason'] not in ('TIMEOUT','START_FAILURE'):
