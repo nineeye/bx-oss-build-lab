@@ -1,0 +1,124 @@
+name: BX C0430 OBS Full Runtime DLL Relocation
+# Official public upstream only. No private BX or customer code, paid runners or artifact upload.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bx-c0430-obs-dll-bundle.yml
+permissions:
+  contents: read
+jobs:
+  native:
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' }}
+    runs-on: windows-2025
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [obs]
+    steps:
+      - name: Set up Python x64
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Real OBS DLL build, Unicode relocation and ABI smoke
+        if: ${{ matrix.target == 'obs' }}
+        shell: pwsh
+        timeout-minutes: 11
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: utf-8
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git clone --depth 1 --branch 32.2.2 https://github.com/obsproject/obs-studio.git source
+          if ($LASTEXITCODE -ne 0) { throw 'OBS_UPSTREAM_CLONE_FAIL' }
+          cmake -S source -B native-build -A x64 '-DOBS_VERSION_OVERRIDE=32.0.0' -DENABLE_UI=OFF -DENABLE_BROWSER=OFF -DENABLE_PLUGINS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'OBS_CMAKE_CONFIG_FAIL' }
+          cmake --build native-build --config Release --target libobs --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'OBS_NATIVE_BUILD_FAIL' }
+          $script = @'
+          import ctypes,hashlib,json,os,pathlib,shutil,sys,tempfile
+          assert sys.platform=='win32'
+          root=pathlib.Path('native-build')
+          dlls=list(root.rglob('obs.dll'))
+          assert dlls,'BUILT_OBS_DLL_MISSING'
+          target=next((p for p in dlls if p.parent.name.lower()=='release' and p.parent.parent.name=='libobs'),dlls[0])
+          sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+          before=sha(target)
+          out=pathlib.Path(tempfile.gettempdir())/'BX 한글 공백 OBS Runtime'
+          if out.exists():shutil.rmtree(out)
+          shutil.copytree(target.parent,out)
+          deps=pathlib.Path('source/.deps')
+          copied=0
+          for d in deps.glob('*x64/bin'):
+              for dll in d.glob('*.dll'):
+                  destination=out/dll.name
+                  if not destination.exists():
+                      shutil.copy2(dll,destination);copied+=1
+          print('BX_DEPLOYMENT_DLLS_COPIED',copied,flush=True)
+          moved=out/target.name
+          assert sha(moved)==before,'RELOCATED_DLL_HASH_MISMATCH'
+          dirs=[out]
+          dirs.extend(sorted({p.parent for p in root.rglob('*.dll') if p.parent!=target.parent},key=str))
+          handles=[]
+          for d in dirs:
+              try: handles.append(os.add_dll_directory(str(d.resolve())))
+              except OSError: pass
+          result={'schema':'BX_C0430_OBS_NATIVE_ABI_V1','status':'BLOCK',
+              'upstream':'obsproject/obs-studio','upstream_tag':'32.2.2',
+              'dll_sha256':before,'dll_bytes':moved.stat().st_size,
+              'korean_path':True,'private_bx_certified':False,'full_obs_app_certified':False,
+              'github_run_id':os.getenv('GITHUB_RUN_ID','')}
+          try:
+              for i in range(2):
+                  lib=ctypes.WinDLL(str(moved))
+                  version=lib.obs_get_version_string
+                  version.restype=ctypes.c_char_p
+                  text=(version() or b'').decode('utf-8','strict')
+                  assert text and text[0].isdigit(),('BAD_OBS_VERSION',text)
+                  result['version']=text
+              assert sha(moved)==before,'DLL_CHANGED_AFTER_ABI_SMOKE'
+              result.update(status='PASS_COMPONENT_RUNTIME',abi_runs=2)
+          finally:
+              print('BX_C0430_OBS_PROOF '+json.dumps(result,sort_keys=True),flush=True)
+          assert result['status']=='PASS_COMPONENT_RUNTIME'
+          '@
+          [IO.File]::WriteAllText((Join-Path (Get-Location) 'obs_abi_check.py'),$script,[Text.UTF8Encoding]::new($false))
+          python obs_abi_check.py
+          if ($LASTEXITCODE -ne 0) { throw 'OBS_ABI_RUNTIME_GATE_BLOCK' }
+      - name: QGIS native GIS dependency recovery
+        if: ${{ matrix.target == 'qgis' }}
+        shell: pwsh
+        timeout-minutes: 17
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: utf-8
+        run: |
+          $ErrorActionPreference='Stop'
+          $stage='INIT'
+          try {
+            $stage='CHECKOUT'
+            git -c core.longpaths=true clone --depth 1 --filter=blob:none https://github.com/qgis/QGIS.git source
+            if ($LASTEXITCODE -ne 0) {throw 'QGIS_CHECKOUT_FAILED'}
+            $stage='FLEX_BISON'
+            choco install -y --no-progress winflexbison3 --version=2.5.24.20210105
+            if ($LASTEXITCODE -ne 0) {throw 'WINFLEXBISON_INSTALL_FAILED'}
+            $flex=(Get-Command win_flex.exe -ErrorAction Stop).Source
+            $bison=(Get-Command win_bison.exe -ErrorAction Stop).Source
+            $stage='VCPKG_GIS_DEPS'
+            $vcpkg=Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe'
+            & $vcpkg install proj:x64-windows geos:x64-windows gdal:x64-windows spatialindex:x64-windows libzip:x64-windows
+            if ($LASTEXITCODE -ne 0) {throw 'GIS_NATIVE_INSTALL_FAILED'}
+            $stage='CMAKE_CONFIG'
+            $toolchain=Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts\buildsystems\vcpkg.cmake'
+            cmake -S source -B native-build -A x64 "-DCMAKE_TOOLCHAIN_FILE=$toolchain" "-DFLEX_EXECUTABLE=$flex" "-DBISON_EXECUTABLE=$bison" -DWITH_GUI=OFF -DWITH_DESKTOP=OFF -DWITH_SERVER=OFF -DWITH_QTWEBKIT=OFF
+            if ($LASTEXITCODE -ne 0) {throw 'QGIS_CONFIG_FAILED'}
+            $stage='CORE_NATIVE_COMPILE'
+            cmake --build native-build --config Release --target qgis_core --parallel 2
+            if ($LASTEXITCODE -ne 0) {throw 'QGIS_CORE_BUILD_FAILED'}
+            $stage='DONE'
+            Write-Host 'BX_C0430_QGIS_PROOF {"status":"PASS_COMPONENT_BUILD","customer_release_approved":false}'
+          } finally {
+            Write-Host ('BX_C0430_QGIS_STAGE '+$stage)
+          }
