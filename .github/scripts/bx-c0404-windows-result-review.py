@@ -17,13 +17,20 @@ PROBE_SCHEMA = 'BX_C0403_RUNTIME_PROBE_V1'
 REVIEW_SCHEMA = 'BX_C0404_WINDOWS_RESULT_REVIEW_V1'
 SHA_RE = re.compile(r'^[a-fA-F0-9]{64}$')
 MAX_BYTES = 128_000
-KNOWN_CATEGORIES = frozenset(('QT_PLUGIN','MISSING_MODULE','MISSING_DLL','PYTHON_EXCEPTION'))
+KNOWN_CATEGORIES = frozenset(('QT_PLUGIN','MISSING_MODULE','MISSING_DLL','PYTHON_EXCEPTION',
+                              'WINDOWS_ACCESS_VIOLATION','WINDOWS_DLL_NOT_FOUND',
+                              'WINDOWS_STACK_BUFFER_OVERRUN','WINDOWS_SIDE_BY_SIDE'))
+STAGES = frozenset(('NOT_REACHED','IMPORT_OK','VIEWER_CREATED','IMAGE_VERIFIED','VIEWER_CLOSED'))
 KNOWN_REASONS = frozenset(('OK','TARGET_NOT_FOUND','START_FAILURE','TIMEOUT','NONZERO_EXIT','MARKER_MISSING','NOT_RUN'))
 HINTS = {
     'QT_PLUGIN': 'Qt 플랫폼 플러그인과 실행 PC의 그래픽/디스플레이 환경을 확인하세요.',
     'MISSING_DLL': '누락된 DLL과 네이티브 라이브러리의 패키징 위치를 확인하세요.',
     'MISSING_MODULE': 'PyInstaller hidden-import 및 패키지 의존성을 점검하세요.',
     'PYTHON_EXCEPTION': '원본과 EXE의 예외 위치 및 입력 자료를 비교하세요.',
+    'WINDOWS_ACCESS_VIOLATION': '네이티브 충돌(0xC0000005): Qt/OpenGL 및 확장 모듈 충돌을 조사하세요.',
+    'WINDOWS_DLL_NOT_FOUND': '네이티브 DLL 로더 실패(0xC0000135): 누락 DLL 및 PATH를 확인하세요.',
+    'WINDOWS_STACK_BUFFER_OVERRUN': 'Windows 네이티브 비정상 종료(0xC0000409): 충돌 원인을 조사하세요.',
+    'WINDOWS_SIDE_BY_SIDE': 'Windows Side-by-Side 구성 오류(0xC0150002): VC++ 런타임과 매니페스트를 검사하세요.',
 }
 
 
@@ -69,6 +76,13 @@ def load_probe(path: str, expected_mode: str) -> dict:
         raise EvidenceInvalid('UNKNOWN_ERROR_CATEGORY')
     if len(categories) > 30:
         raise EvidenceInvalid('EXCESSIVE_CATEGORIES')
+    if 'last_stage' in doc and (not isinstance(doc['last_stage'],str) or doc['last_stage'] not in STAGES):
+        raise EvidenceInvalid('INVALID_STAGE_PROGRESS')
+    if 'windows_exit_category' in doc and doc['windows_exit_category'] is not None:
+        if doc['windows_exit_category'] not in KNOWN_CATEGORIES or not doc['windows_exit_category'].startswith('WINDOWS_'):
+            raise EvidenceInvalid('INVALID_WINDOWS_EXIT_CATEGORY')
+        if doc['windows_exit_category'] not in categories:
+            raise EvidenceInvalid('WINDOWS_CATEGORY_NOT_RECORDED')
     if doc['status'] == 'PASS' and not (doc['reason'] == 'OK' and code == 0 and doc['success_marker_seen']):
         raise EvidenceInvalid('CONTRADICTORY_PASS_REPORT')
     if doc['status'] == 'FAIL' and doc['reason'] == 'OK':
@@ -103,7 +117,10 @@ def compare(source: dict, exe: dict, before_sha: str, after_sha: str, *, run_id:
     elif not exe_pass:
         decision = 'FROZEN_EXE_RUNTIME_FAILED'
         primary = next((name for name in exe['categories'] if name in HINTS), None)
-        guidance = '원본은 정상이고 EXE 실행검사만 실패했습니다. ' + HINTS.get(primary, '실행파일의 종료 코드와 오류 분류를 확인하세요.')
+        last_stage = exe.get('last_stage','NOT_REPORTED')
+        guidance = ('원본은 정상이고 EXE 실행검사만 실패했습니다. '
+                    + ('마지막 정상 단계: '+last_stage+'. ' if last_stage not in ('NOT_REPORTED','NOT_REACHED') else '')
+                    + HINTS.get(primary, '실행파일의 종료 코드와 오류 분류를 확인하세요.'))
     else:
         decision = 'HASH_EVIDENCE_MISSING'
         guidance = 'EXE 실행 전후 SHA-256 기록이 없어 검증을 완료할 수 없습니다.'
@@ -117,6 +134,9 @@ def compare(source: dict, exe: dict, before_sha: str, after_sha: str, *, run_id:
         'frozen_reason': exe['reason'],
         'frozen_exit_code': exe['exit_code'],
         'frozen_error_categories': exe['categories'][:30],
+        'source_last_stage': source.get('last_stage','NOT_REPORTED'),
+        'frozen_last_stage': exe.get('last_stage','NOT_REPORTED'),
+        'frozen_windows_exit_category': exe.get('windows_exit_category'),
         'exe_hash_checked': bool(before),
         'exe_hash_equal': hash_match,
         'github_run_id': run_id,
