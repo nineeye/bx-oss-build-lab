@@ -1,0 +1,35 @@
+name: BX C0428 Ultra Source Second-Layer Free Windows Retry
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bx-c0428-retry-godot-qgis.yml
+permissions:
+  contents: read
+jobs:
+  repair:
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' }}
+    runs-on: windows-2025
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        ultra: [godot, qgis]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Retry after isolated first failure repairs
+        shell: pwsh
+        timeout-minutes: 11
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: utf-8
+          PIP_NO_INPUT: '1'
+        run: |
+          python .github/scripts/bx-c0428-ultra10.py ${{ matrix.ultra }}
+          if ($LASTEXITCODE -ne 0) { throw "C0428_SECOND_LAYER_BLOCKED_${{ matrix.ultra }}" }
