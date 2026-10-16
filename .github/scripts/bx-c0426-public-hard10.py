@@ -9,10 +9,10 @@ CASES = {
       "src": """import os
 os.environ['QT_QPA_PLATFORM']='offscreen'
 import numpy as np, napari
-v=napari.Viewer(show=False)
+v=napari.components.ViewerModel()
 a=v.add_image(np.arange(100,dtype=np.uint8).reshape(10,10))
 assert a.data.shape==(10,10) and int(a.data[-1,-1])==99
-v.close()
+v.layers.clear()
 print('BX_HARD10_PASS')
 """
     },
@@ -42,8 +42,8 @@ print('BX_HARD10_PASS')
       "src": """import os
 os.environ['QT_QPA_PLATFORM']='offscreen'
 import numpy as np
-from labelme import utils
-mask=utils.shape_to_mask((20,20),[[2,2],[12,2],[12,12],[2,12]],shape_type='polygon')
+from labelme._utils.shape import shape_to_mask
+mask=shape_to_mask((20,20),[[2,2],[12,2],[12,12],[2,12]],shape_type='polygon')
 assert mask.shape==(20,20) and 80<=int(mask.sum())<=130
 print('BX_HARD10_PASS')
 """
@@ -149,7 +149,18 @@ try:
         run(["git","clone","--depth","1","--recurse-submodules","--shallow-submodules","https://github.com/OpenShot/libopenshot-audio.git"],300)
         run(["git","clone","--depth","1","--recurse-submodules","--shallow-submodules","https://github.com/OpenShot/libopenshot.git"],300)
         report["stage"]="OPENSHOT_CMAKE_CONFIG"
-        run(["cmake","-S","libopenshot-audio","-B","out-audio","-A","x64"],300)
+        vcpkg_root=pathlib.Path(os.environ.get("VCPKG_INSTALLATION_ROOT",r"C:\\vcpkg"))
+        vcpkg_exe=vcpkg_root/"vcpkg.exe"
+        if not vcpkg_exe.is_file():
+            vcpkg_found=shutil.which("vcpkg")
+            if not vcpkg_found: raise RuntimeError("VCPKG_NOT_FOUND")
+            vcpkg_exe=pathlib.Path(vcpkg_found)
+            vcpkg_root=vcpkg_exe.parent
+        report["stage"]="OPENSHOT_INSTALL_ZLIB"
+        run([str(vcpkg_exe),"install","zlib:x64-windows"],600)
+        toolchain=vcpkg_root/"scripts"/"buildsystems"/"vcpkg.cmake"
+        if not toolchain.is_file():raise RuntimeError("VCPKG_CMAKE_TOOLCHAIN_MISSING")
+        run(["cmake","-S","libopenshot-audio","-B","out-audio","-A","x64",f"-DCMAKE_TOOLCHAIN_FILE={toolchain}"],300)
         report["stage"]="OPENSHOT_AUDIO_NATIVE_BUILD"
         run(["cmake","--build","out-audio","--config","Release","--parallel","2"],600)
         report["stage"]="OPENSHOT_VIDEO_CMAKE_CONFIG"
