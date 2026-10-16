@@ -1,0 +1,43 @@
+name: BX C0428 ULTRA10 Free Windows OSS Native Source Builds
+# Ten independent real upstream native build attempts, no synthetic pass/fail, no private source.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bx-c0428-ultra10-free.yml
+permissions:
+  contents: read
+concurrency:
+  group: bx-c0428-ultra10-public
+  cancel-in-progress: false
+jobs:
+  source-native-build:
+    if: \${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' }}
+    runs-on: windows-2025
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        ultra: [godot, openshot, obs, freecad, qgis, kicad, blender, gimp, krita, tesseract]
+    steps:
+      - name: Checkout public build harness only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Run real public source build with failure stage classification
+        timeout-minutes: 14
+        shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: utf-8
+          PIP_NO_INPUT: '1'
+          PIP_DISABLE_PIP_VERSION_CHECK: '1'
+        run: |
+          python .github/scripts/bx-c0428-ultra10.py \${{ matrix.ultra }}
+          if ($LASTEXITCODE -ne 0) { throw "ULTRA10_NATIVE_BUILD_BLOCKED_\${{ matrix.ultra }}" }
