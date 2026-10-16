@@ -21,6 +21,7 @@ permissions:
   contents: read
 jobs:
   safe-public-probe:
+    if: ${{ false }} # C0411 freeze old workflow to avoid billing/storage risk
     runs-on: windows-2025
     timeout-minutes: 5
     steps:
@@ -33,7 +34,7 @@ jobs:
             Write-Output 'C0366_PUBLIC_PROBE_ONLY_NO_TOKEN_NO_PRIVATE_SOURCE'
           }
   private-owner-opt-in:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.private_native_approval == 'I_APPROVE_BX_C0366_PRIVATE_RUNNER_BRIDGE' && vars.BX_BRIDGE_ENABLED == 'true' && github.repository == 'nineeye/bx-oss-build-lab' }}
+    if: ${{ false }} # C0411 freeze old workflow to avoid billing/storage risk
     runs-on: windows-2025
     timeout-minutes: 95
     steps:
