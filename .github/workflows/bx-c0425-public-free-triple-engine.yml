@@ -70,7 +70,7 @@ jobs:
             python -m PyInstaller --noconfirm --clean --onedir --name bx_sample business_sample.py
             $folder = 'dist/bx_sample'
           } elseif ($engine -eq 'nuitka') {
-            python -m nuitka --mode=standalone --msvc=latest --output-dir=dist --output-filename=bx_sample.exe business_sample.py
+            python -m nuitka --mode=standalone --msvc=latest --assume-yes-for-downloads --output-dir=dist --output-filename=bx_sample.exe business_sample.py
             $folder = 'dist/business_sample.dist'
           } else {
             $setup = "from cx_Freeze import setup, Executable`nsetup(name='bx_public_test', version='1.0', executables=[Executable('business_sample.py', target_name='bx_sample.exe')])`n"
