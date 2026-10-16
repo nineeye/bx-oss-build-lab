@@ -16,7 +16,7 @@ permissions:
   contents: read
 jobs:
   hard-build:
-    if: ${{ github.actor == 'nineeye' && inputs.approve == 'I_APPROVE_BX_C0400_HARD3' }}
+    if: ${{ false }} # C0411 freeze old workflow to avoid billing/storage risk
     runs-on: windows-2025
     timeout-minutes: 150
     strategy:
