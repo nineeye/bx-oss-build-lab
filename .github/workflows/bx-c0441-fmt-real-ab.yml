@@ -1,0 +1,75 @@
+name: BX C0441 Native A-B FMT Build Quality
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/bx-c0441-fmt-real-ab.yml]
+permissions:
+  contents: read
+jobs:
+  real-windows-ab:
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' }}
+    runs-on: windows-2025
+    timeout-minutes: 14
+    steps:
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Build two isolated public CMake variants and execute native tests
+        shell: pwsh
+        timeout-minutes: 13
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: utf-8
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected='40626af88bd7df9a5fb80be7b25ac85b122d6c21'
+          git clone --depth 1 --branch 11.2.0 https://github.com/fmtlib/fmt.git fmt-src
+          if ($LASTEXITCODE -ne 0) { throw 'FMT_CLONE_FAILED' }
+          $actual=(git -C fmt-src rev-parse HEAD).Trim()
+          if ($actual -ne $expected) { throw ('UPSTREAM_SHA_CHANGED '+$actual) }
+          $cm=@'
+          cmake_minimum_required(VERSION 3.22)
+          project(BXPublicFmtAB LANGUAGES CXX)
+          enable_testing()
+          add_subdirectory(fmt-src)
+          add_executable(bx_fmt_probe bx_fmt_probe.cpp)
+          target_link_libraries(bx_fmt_probe PRIVATE fmt::fmt)
+          '@
+          $cpp=@'
+          #include <fmt/format.h>
+          #include <iostream>
+          int main() { std::cout << fmt::format("BX_FMT_AB_{}",42) << "\n"; return 0; }
+          '@
+          [IO.File]::WriteAllText((Join-Path (Get-Location) 'CMakeLists.txt'),$cm,[Text.UTF8Encoding]::new($false))
+          [IO.File]::WriteAllText((Join-Path (Get-Location) 'bx_fmt_probe.cpp'),$cpp,[Text.UTF8Encoding]::new($false))
+          $results=@()
+          foreach ($label in @('A','B')) {
+            $test=($label -eq 'B')
+            $testFlag=if ($test) {'ON'} else {'OFF'}
+            $clock=[Diagnostics.Stopwatch]::StartNew()
+            cmake -S . -B ("build-"+$label) -A x64 "-DFMT_TEST=$testFlag" -DFMT_DOC=OFF -DFMT_INSTALL=OFF
+            if ($LASTEXITCODE -ne 0) { throw "CMAKE_CONFIG_$label" }
+            $configSeconds=$clock.Elapsed.TotalSeconds
+            cmake --build ("build-"+$label) --config Release --target bx_fmt_probe --parallel 2
+            if ($LASTEXITCODE -ne 0) {throw "NATIVE_PROBE_BUILD_$label"}
+            $extraTests=0
+            if ($test) {
+              cmake --build ("build-"+$label) --config Release --target format-test --parallel 2
+              if ($LASTEXITCODE -ne 0) {throw 'FMT_TEST_BUILD_FAILED'}
+              ctest --test-dir ("build-"+$label) -C Release -R '^format-test$' --output-on-failure
+              if ($LASTEXITCODE -ne 0) {throw 'FMT_NATIVE_FORMAT_TEST_FAILED'}
+              $extraTests=1
+            }
+            $clock.Stop()
+            $exe=Join-Path (Get-Location) ("build-"+$label+"\Release\bx_fmt_probe.exe")
+            if (!(Test-Path -LiteralPath $exe)) {throw "PROBE_EXE_MISSING_$label"}
+            $output=(& $exe | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or $output -ne 'BX_FMT_AB_42') {throw ("REAL_RUNTIME_MISMATCH_"+$label+"="+$output)}
+            $hash=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+            $results+=@{variant=$label;status='PASS_NATIVE_EXE_AND_RUNTIME';tests_enabled=$test;additional_native_tests_passed=$extraTests;configure_seconds=[Math]::Round($configSeconds,2);total_seconds=[Math]::Round($clock.Elapsed.TotalSeconds,2);exe_sha256=$hash;exe_bytes=(Get-Item -LiteralPath $exe).Length;output=$output}
+          }
+          if ($results.Count -ne 2) {throw 'AB_INCOMPLETE'}
+          if ($results[1].additional_native_tests_passed -ne 1) {throw 'AB_TEST_COVERAGE_MISSING'}
+          $receipt=[ordered]@{schema='BX_C0441_REAL_WINDOWS_AB_V1';status='PASS_TWO_INDEPENDENT_NATIVE_BUILDS';run_id=$env:GITHUB_RUN_ID;source_repo='fmtlib/fmt';source_tag='11.2.0';source_sha=$actual;variants=$results;selection_claim='ONLY_THIS_PUBLIC_FMT_EXPERIMENT';qgis_native_candidates_tested=$false;customer_release_approved=$false}
+          Write-Host ('BX_C0441_AB_NATIVE_RECEIPT '+($receipt|ConvertTo-Json -Depth 8 -Compress))
