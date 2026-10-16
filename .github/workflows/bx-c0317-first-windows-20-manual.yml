@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   windows-20:
-    if: ${{ github.repository == 'nineeye/bx-oss-build-lab' && inputs.approval == 'I_APPROVE_BX_C0317_20' }}
+    if: ${{ false }} # C0411 freeze old workflow to avoid billing/storage risk
     runs-on: windows-2025
     timeout-minutes: 90
     env:
