@@ -51,8 +51,12 @@ def cmd(stage,args,seconds=240,cwd=None,required=True):
     finally:
         report["steps"].append(spec)
         print("BX_STAGE "+stage+" END",flush=True)
-def clone(repo_url):
-    cmd("UPSTREAM_SHALLOW_CLONE",["git","-c","core.longpaths=true","clone","--depth","1","--filter=blob:none",repo_url,"source"],200)
+def clone(repo_url, pinned_tag=None):
+    args=["git","-c","core.longpaths=true","clone","--depth","1","--filter=blob:none"]
+    if pinned_tag:
+        args+=["--branch",pinned_tag]
+    args += [repo_url,"source"]
+    cmd("UPSTREAM_SHALLOW_CLONE",args,200)
     v=cmd("UPSTREAM_COMMIT",["git","rev-parse","HEAD"],20,cwd="source")
     sha=v.strip().splitlines()[-1]
     if not re.fullmatch("[a-f0-9]{40}",sha):raise RuntimeError("UNVERIFIED_UPSTREAM_COMMIT")
@@ -78,12 +82,12 @@ try:
         report["status"]="PASS_COMPONENT_ONLY"
         report["cause"]="OPENSHOT_NATIVE_AUDIO_VIDEO_COMPONENTS_BUILT_NOT_GUI"
     else:
-        clone(repo)
+        clone(repo, pinned_tag="32.2.2" if case=="obs" else None)
         if case=="godot":
             cmd("INSTALL_SCONS",[sys.executable,"-m","pip","install","--disable-pip-version-check","SCons>=4.7,<5","zstandard"],120)
             report["windows_native_build_attempted"]=True
             cmd("GODOT_NATIVE_CPP_COMPILE",[sys.executable,"-m","SCons","platform=windows",
-                 "target=template_release","arch=x86_64","lto=none","accesskit=no","d3d12=no","angle=no","-j2"],500,cwd="source")
+                 "target=template_release","arch=x86_64","lto=none","accesskit=no","d3d12=no","angle=no","disable_3d=yes","disable_advanced_gui=yes","module_text_server_adv_enabled=no","module_text_server_fb_enabled=yes","-j2"],500,cwd="source")
             exe=next(iter((pathlib.Path("source")/"bin").glob("godot.windows.template_release*.exe")),None)
             if not exe:raise RuntimeError("BUILT_GODOT_EXE_NOT_FOUND")
             cmd("GODOT_HEADLESS_RUN",[str(exe.absolute()),"--headless","--version"],60)
@@ -109,7 +113,14 @@ try:
         elif case=="freecad":
             cmake_app(["-DBUILD_GUI=OFF","-DBUILD_FEM=OFF","-DBUILD_TEST=OFF"])
         elif case=="qgis":
-            cmake_app(["-DWITH_GUI=OFF","-DWITH_DESKTOP=OFF","-DWITH_SERVER=OFF","-DWITH_QTWEBKIT=OFF"])
+            cmd("FLEX_BISON_PINNED_PUBLIC_DEP",["choco","install","winflexbison3","--version=2.5.24.20210105","-y","--no-progress"],240)
+            flex=shutil.which("win_flex.exe")
+            bison=shutil.which("win_bison.exe")
+            if not flex or not bison: raise RuntimeError("FLEX_BISON_NOT_DISCOVERABLE")
+            cmd("FLEX_NATIVE_VERSION",[flex,"--version"],15)
+            cmd("BISON_NATIVE_VERSION",[bison,"--version"],15)
+            cmake_app(["-DWITH_GUI=OFF","-DWITH_DESKTOP=OFF","-DWITH_SERVER=OFF","-DWITH_QTWEBKIT=OFF",
+                       f"-DFLEX_EXECUTABLE={flex}",f"-DBISON_EXECUTABLE={bison}"])
         elif case=="kicad":
             cmake_app(["-DKICAD_BUILD_QA_TESTS=OFF","-DKICAD_BUILD_I18N=OFF"])
         elif case=="blender":
