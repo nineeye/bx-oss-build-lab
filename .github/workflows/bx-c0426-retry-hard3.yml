@@ -1,0 +1,39 @@
+name: BX C0426 Public Windows Hard3 Remediation
+# Retry ONLY 3 failed cases after upstream-specific fixes; no proprietary BX code.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bx-c0426-retry-hard3.yml
+permissions:
+  contents: read
+jobs:
+  retry:
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' }}
+    runs-on: windows-2025
+    timeout-minutes: 28
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        workload: [napari, labelme, openshot]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Build and run fixed public workload
+        shell: pwsh
+        timeout-minutes: 26
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: utf-8
+          PIP_NO_INPUT: '1'
+          QT_QPA_PLATFORM: offscreen
+          MPLBACKEND: Agg
+        run: |
+          python .github/scripts/bx-c0426-public-hard10.py ${{ matrix.workload }}
+          if ($LASTEXITCODE -ne 0) { throw "C0426_RETRY_FAILED_${{ matrix.workload }}" }
