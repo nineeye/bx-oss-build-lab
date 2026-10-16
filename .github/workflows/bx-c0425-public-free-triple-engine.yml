@@ -1,0 +1,98 @@
+name: BX C0425 Free Public Windows 3 Python Engines
+# Public synthetic sample only. No proprietary BX PRO or customer code.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bx-c0425-public-free-triple-engine.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: bx-c0425-public-free-triple-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  smoke:
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [pyinstaller, nuitka, cx-freeze]
+    runs-on: windows-2025
+    timeout-minutes: 40
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      PIP_NO_INPUT: '1'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+    steps:
+      - name: Install Python 3.12 x64
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Build real EXE and run it twice from Korean path
+        shell: pwsh
+        timeout-minutes: 35
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $engine = '${{ matrix.engine }}'
+          $source = @'
+          import csv, decimal, hashlib, io, json, zipfile
+          orders = [('볼트A', '3', '15700'), ('상자B', '2', '8300'), ('나사C', '10', '240')]
+          total = sum(decimal.Decimal(q) * decimal.Decimal(p) for _, q, p in orders)
+          assert total == decimal.Decimal('66100')
+          buf = io.StringIO(newline='')
+          writer = csv.writer(buf)
+          writer.writerow(('품목', '수량', '단가'))
+          writer.writerows(orders)
+          data = buf.getvalue().encode('utf-8-sig')
+          out = io.BytesIO()
+          with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
+              z.writestr('order.csv', data)
+          with zipfile.ZipFile(io.BytesIO(out.getvalue())) as z:
+              assert z.read('order.csv') == data
+          print('BX_FREE_BUILD_SAMPLE_PASS ' + json.dumps({'rows': 3, 'total': int(total), 'sha256': hashlib.sha256(data).hexdigest()}, sort_keys=True))
+          '@
+          [IO.File]::WriteAllText((Join-Path (Get-Location) 'business_sample.py'), $source, [Text.UTF8Encoding]::new($false))
+          $baseline = (& python business_sample.py | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $baseline.StartsWith('BX_FREE_BUILD_SAMPLE_PASS ')) { throw 'BASELINE_FAILED' }
+          if ($engine -eq 'pyinstaller') {
+            python -m pip install --only-binary=:all: 'PyInstaller==6.22.3'
+          } elseif ($engine -eq 'nuitka') {
+            python -m pip install 'Nuitka==4.3' 'ordered-set' 'zstandard'
+          } elseif ($engine -eq 'cx-freeze') {
+            python -m pip install --only-binary=:all: 'cx-Freeze==8.7.2'
+          } else { throw 'UNKNOWN_ENGINE' }
+          if ($LASTEXITCODE -ne 0) { throw 'INSTALL_FAILED' }
+          $timer = [Diagnostics.Stopwatch]::StartNew()
+          if ($engine -eq 'pyinstaller') {
+            python -m PyInstaller --noconfirm --clean --onedir --name bx_sample business_sample.py
+            $folder = 'dist/bx_sample'
+          } elseif ($engine -eq 'nuitka') {
+            python -m nuitka --mode=standalone --msvc=latest --output-dir=dist --output-filename=bx_sample.exe business_sample.py
+            $folder = 'dist/business_sample.dist'
+          } else {
+            $setup = "from cx_Freeze import setup, Executable`nsetup(name='bx_public_test', version='1.0', executables=[Executable('business_sample.py', target_name='bx_sample.exe')])`n"
+            [IO.File]::WriteAllText((Join-Path (Get-Location) 'setup.py'), $setup, [Text.UTF8Encoding]::new($false))
+            python setup.py build_exe --build-exe dist/cx_sample
+            $folder = 'dist/cx_sample'
+          }
+          if ($LASTEXITCODE -ne 0) { throw ('BUILD_FAILED_' + $engine) }
+          $timer.Stop()
+          $exe = Join-Path $folder 'bx_sample.exe'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw ('EXE_MISSING_' + $engine) }
+          $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $size = (Get-Item -LiteralPath $exe).Length
+          $target = Join-Path $env:RUNNER_TEMP ('BX 한글 공백 ' + $engine)
+          New-Item -ItemType Directory -Path $target -Force | Out-Null
+          Copy-Item -Path (Join-Path $folder '*') -Destination $target -Recurse -Force
+          $moved = Join-Path $target 'bx_sample.exe'
+          if ((Get-FileHash -LiteralPath $moved -Algorithm SHA256).Hash.ToLowerInvariant() -cne $hash) { throw 'EXE_CHANGED_ON_COPY' }
+          foreach ($attempt in 1, 2) {
+            $actual = (& $moved | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or $actual -cne $baseline) { throw ('RUNTIME_MISMATCH_' + $attempt) }
+            if ((Get-FileHash -LiteralPath $moved -Algorithm SHA256).Hash.ToLowerInvariant() -cne $hash) { throw ('EXE_CHANGED_AFTER_EXEC_' + $attempt) }
+          }
+          $proof = [ordered]@{schema='BX_C0425_PUBLIC_TRIPLE_REAL_WINDOWS_V1';engine=$engine;result='PASS';built_exe=$true;ran_twice=$true;korean_path=$true;source_baseline_matched=$true;exe_sha256=$hash;exe_bytes=$size;build_seconds=[Math]::Round($timer.Elapsed.TotalSeconds,2);run_id=$env:GITHUB_RUN_ID;run_attempt=$env:GITHUB_RUN_ATTEMPT;commit=$env:GITHUB_SHA;public_synthetic_only=$true;private_product_certified=$false}
+          Write-Host ('BX_C0425_PROOF ' + ($proof | ConvertTo-Json -Compress))
