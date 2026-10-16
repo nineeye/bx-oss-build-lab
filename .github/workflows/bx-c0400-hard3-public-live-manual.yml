@@ -1,0 +1,125 @@
+name: BX C0400 Real Hard Three OSS Build Experiments
+# PUBLIC upstream code only. Never checkout or upload BX private development ZIP.
+on:
+  workflow_dispatch:
+    inputs:
+      approve:
+        description: "Type I_APPROVE_BX_C0400_HARD3; jobs may consume hosted-runner minutes"
+        required: true
+        type: string
+      program:
+        description: "Hard test target"
+        required: true
+        type: choice
+        options: [all, napari, ocrmypdf, openshot]
+permissions:
+  contents: read
+jobs:
+  hard-build:
+    if: ${{ github.actor == 'nineeye' && inputs.approve == 'I_APPROVE_BX_C0400_HARD3' }}
+    runs-on: windows-2025
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [napari, ocrmypdf, openshot]
+    steps:
+      - name: Checkout only public controller
+        if: ${{ inputs.program == 'all' || inputs.program == matrix.case }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Python 3.12 x64
+        if: ${{ inputs.program == 'all' || inputs.program == matrix.case }}
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Actual public native build attempt
+        if: ${{ inputs.program == 'all' || inputs.program == matrix.case }}
+        timeout-minutes: 140
+        shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: 'utf-8'
+          PIP_NO_INPUT: '1'
+        run: |
+          $ErrorActionPreference='Stop'
+          $case='${{ matrix.case }}'
+          $out=Join-Path $env:RUNNER_TEMP "bx-c0400-$case.json"
+          $status='BLOCK'; $stage='PREPARE'; $reason='NOT_COMPLETED'
+          try {
+            $stage='TOOLS'
+            python -m pip install --disable-pip-version-check PyInstaller==6.16.0
+            if ($LASTEXITCODE -ne 0) { throw 'PIP_BUILDER_INSTALL_FAIL' }
+            if ($case -eq 'napari') {
+              $stage='NAPARI_INSTALL'
+              python -m pip install 'napari[all]==0.10.0'
+              if ($LASTEXITCODE -ne 0) { throw 'NAPARI_INSTALL_FAIL' }
+              python -c "import base64;open('napari_probe.py','wb').write(base64.b64decode('aW1wb3J0IG9zCm9zLmVudmlyb24uc2V0ZGVmYXVsdCgnUVRfUVBBX1BMQVRGT1JNJywgJ29mZnNjcmVlbicpCmltcG9ydCBudW1weSBhcyBucAppbXBvcnQgbmFwYXJpCnYgPSBuYXBhcmkuVmlld2VyKHNob3c9RmFsc2UpCmxheWVyID0gdi5hZGRfaW1hZ2UobnAuYXJhbmdlKDEwMCwgZHR5cGU9bnAudWludDgpLnJlc2hhcGUoMTAsMTApKQphc3NlcnQgdHVwbGUobGF5ZXIuZGF0YS5zaGFwZSkgPT0gKDEwLDEwKQphc3NlcnQgaW50KGxheWVyLmRhdGFbOSw5XSkgPT0gOTkKdi5jbG9zZSgpCnByaW50KCdCWF9OQVBBUklfRlVOQ1RJT05BTF9QQVNTJykK'))"
+              $stage='NAPARI_EXE_BUILD'
+              python -m PyInstaller --noconfirm --clean --onedir --console --name BX_napari --collect-all napari --collect-all vispy --collect-all magicgui --collect-all qtpy --collect-all superqt napari_probe.py
+              if ($LASTEXITCODE -ne 0) { throw 'NAPARI_BUILD_FAIL' }
+              $stage='NAPARI_EXE_FUNCTIONAL'
+              $output=& .\dist\BX_napari\BX_napari.exe 2>&1 | Out-String
+              if ($LASTEXITCODE -ne 0 -or !$output.Contains('BX_NAPARI_FUNCTIONAL_PASS')) { throw 'NAPARI_EXE_FUNCTIONAL_FAIL' }
+              $status='PASS'
+            }
+            elseif ($case -eq 'ocrmypdf') {
+              $stage='OCR_NATIVE_INSTALL'
+              choco install tesseract ghostscript -y --no-progress
+              if ($LASTEXITCODE -ne 0) { throw 'OCR_NATIVE_INSTALL_FAIL' }
+              python -m pip install ocrmypdf==17.13.0 pillow pypdf
+              if ($LASTEXITCODE -ne 0) { throw 'OCR_INSTALL_FAIL' }
+              python -c "import base64;open('ocr_probe.py','wb').write(base64.b64decode('aW1wb3J0IHN5cyxvY3JteXBkZgpmcm9tIHB5cGRmIGltcG9ydCBQZGZSZWFkZXIKYXNzZXJ0IGxlbihzeXMuYXJndik9PTMKb2NybXlwZGYub2NyKHN5cy5hcmd2WzFdLHN5cy5hcmd2WzJdLGZvcmNlX29jcj1UcnVlLG91dHB1dF90eXBlPSdwZGYnLHByb2dyZXNzX2Jhcj1GYWxzZSkKZm91bmQ9JyAnLmpvaW4ocC5leHRyYWN0X3RleHQoKSBvciAnJyBmb3IgcCBpbiBQZGZSZWFkZXIoc3lzLmFyZ3ZbMl0pLnBhZ2VzKQphc3NlcnQgJzEyMzQ1NicgaW4gZm91bmQsIHJlcHIoZm91bmRbOjIwMF0pCnByaW50KCdCWF9PQ1JfRlVOQ1RJT05BTF9QQVNTJykK'))"
+              $stage='OCR_EXE_BUILD'
+              python -m PyInstaller --noconfirm --clean --onedir --console --name BX_ocr --collect-all ocrmypdf --collect-all pikepdf ocr_probe.py
+              if ($LASTEXITCODE -ne 0) { throw 'OCR_BUILD_FAIL' }
+              $stage='OCR_EXE_FUNCTIONAL'
+              python -c "import base64;open('inputpdfgen.py','wb').write(base64.b64decode('ZnJvbSBQSUwgaW1wb3J0IEltYWdlLCBJbWFnZURyYXcsIEltYWdlRm9udAppbT1JbWFnZS5uZXcoJ1JHQicsKDE4MDAsMzgwKSwnd2hpdGUnKQpkPUltYWdlRHJhdy5EcmF3KGltKQpkLnRleHQoKDgwLDgwKSwnMTIzNDU2JyxmaWxsPSdibGFjaycsZm9udD1JbWFnZUZvbnQudHJ1ZXR5cGUoJ0M6L1dpbmRvd3MvRm9udHMvYXJpYWwudHRmJywxMjUpKQppbS5zYXZlKCdpbnB1dC5wZGYnLCdQREYnLHJlc29sdXRpb249MzAwKQo='))"
+              if ($LASTEXITCODE -ne 0) { throw 'OCR_INPUT_WRITE_FAIL' }
+              python inputpdfgen.py
+              if ($LASTEXITCODE -ne 0) { throw 'OCR_INPUT_FAIL' }
+              $output=& .\dist\BX_ocr\BX_ocr.exe input.pdf output.pdf 2>&1 | Out-String
+              if ($LASTEXITCODE -ne 0 -or !$output.Contains('BX_OCR_FUNCTIONAL_PASS')) { throw 'OCR_EXE_FUNCTIONAL_FAIL' }
+              $status='PASS'
+            }
+            else {
+              $stage='OPENSHOT_SOURCE'
+              git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/OpenShot/libopenshot-audio.git
+              if ($LASTEXITCODE -ne 0) { throw 'OPENSHOT_AUDIO_FETCH_FAIL' }
+              git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/OpenShot/libopenshot.git
+              if ($LASTEXITCODE -ne 0) { throw 'OPENSHOT_VIDEO_FETCH_FAIL' }
+              git clone --depth 1 https://github.com/OpenShot/openshot-qt.git
+              if ($LASTEXITCODE -ne 0) { throw 'OPENSHOT_GUI_FETCH_FAIL' }
+              $stage='OPENSHOT_AUDIO_BUILD'
+              cmake -S libopenshot-audio -B audio-build -A x64
+              if ($LASTEXITCODE -ne 0) { throw 'OPENSHOT_AUDIO_CONFIG_FAIL' }
+              cmake --build audio-build --config Release --parallel 2
+              if ($LASTEXITCODE -ne 0) { throw 'OPENSHOT_AUDIO_BUILD_FAIL' }
+              $stage='OPENSHOT_VIDEO_BUILD'
+              cmake -S libopenshot -B video-build -A x64 -DUSE_QT6=ON
+              if ($LASTEXITCODE -ne 0) { throw 'OPENSHOT_VIDEO_CONFIG_FAIL' }
+              cmake --build video-build --config Release --parallel 2
+              if ($LASTEXITCODE -ne 0) { throw 'OPENSHOT_VIDEO_BUILD_FAIL' }
+              # A complete OpenShot GUI installer + functional video export has not been made.
+              $stage='OPENSHOT_FULL_GUI'
+              throw 'GUI_INTEGRATION_AND_EXPORT_NOT_TESTED'
+            }
+          }
+          catch {
+            $reason=($_.Exception.Message -replace '[^A-Za-z0-9_]', '_')
+          }
+          finally {
+            $json=[ordered]@{schema='bx-c0400-hard3-live';case=$case;status=$status;last_stage=$stage;reason=$reason;windows_native_attempted=$true;full_upstream_certified=$false;bx_private_engine_tested=$false;sale_approved=$false;run_id=$env:GITHUB_RUN_ID;run_attempt=$env:GITHUB_RUN_ATTEMPT}
+            $json | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $out -Encoding UTF8
+            if ($status -ne 'PASS') { throw "BUILD_TEST_BLOCKED_$case`_$stage`_$reason" }
+          }
+      - name: Save limited JSON evidence only
+        if: ${{ always() && (inputs.program == 'all' || inputs.program == matrix.case) }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bx-c0400-${{ matrix.case }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/bx-c0400-${{ matrix.case }}.json
+          if-no-files-found: warn
+          retention-days: 7
