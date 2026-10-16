@@ -119,8 +119,12 @@ try:
             if not flex or not bison: raise RuntimeError("FLEX_BISON_NOT_DISCOVERABLE")
             cmd("FLEX_NATIVE_VERSION",[flex,"--version"],15)
             cmd("BISON_NATIVE_VERSION",[bison,"--version"],15)
+            vcpkg=pathlib.Path(os.environ.get("VCPKG_INSTALLATION_ROOT",r"C:\\vcpkg"))
+            if not (vcpkg/"vcpkg.exe").is_file(): raise RuntimeError("QGIS_VCPKG_NOT_FOUND")
+            cmd("QGIS_PROJ_NATIVE_DEP",[str(vcpkg/"vcpkg.exe"),"install","proj:x64-windows"],480)
             cmake_app(["-DWITH_GUI=OFF","-DWITH_DESKTOP=OFF","-DWITH_SERVER=OFF","-DWITH_QTWEBKIT=OFF",
-                       f"-DFLEX_EXECUTABLE={flex}",f"-DBISON_EXECUTABLE={bison}"])
+                       f"-DFLEX_EXECUTABLE={flex}",f"-DBISON_EXECUTABLE={bison}",
+                       f"-DCMAKE_TOOLCHAIN_FILE={vcpkg / 'scripts' / 'buildsystems' / 'vcpkg.cmake'}"])
         elif case=="kicad":
             cmake_app(["-DKICAD_BUILD_QA_TESTS=OFF","-DKICAD_BUILD_I18N=OFF"])
         elif case=="blender":
