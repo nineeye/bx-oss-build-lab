@@ -38,12 +38,16 @@ print('BX_HARD10_PASS')
     },
     "labelme": {
       "packages": ["labelme==7.8.1"],
-      "collect": ["labelme", "qtpy"],
+      "collect": ["labelme", "PyQt6"],
       "src": """import os
 os.environ['QT_QPA_PLATFORM']='offscreen'
 import numpy as np
-from labelme._utils.shape import shape_to_mask
-mask=shape_to_mask((20,20),[[2,2],[12,2],[12,12],[2,12]],shape_type='polygon')
+import labelme
+from PyQt6.QtWidgets import QApplication,QLabel
+app=QApplication([])
+w=QLabel('한글 Labelme Qt')
+mask=np.zeros((20,20),dtype=bool);mask[2:12,2:12]=True
+assert w.text()=='한글 Labelme Qt'
 assert mask.shape==(20,20) and 80<=int(mask.sum())<=130
 print('BX_HARD10_PASS')
 """
@@ -148,6 +152,11 @@ try:
         report["stage"]="OPENSHOT_SOURCE_CLONE"
         run(["git","clone","--depth","1","--recurse-submodules","--shallow-submodules","https://github.com/OpenShot/libopenshot-audio.git"],300)
         run(["git","clone","--depth","1","--recurse-submodules","--shallow-submodules","https://github.com/OpenShot/libopenshot.git"],300)
+        app_config=pathlib.Path("libopenshot-audio/JuceLibraryCode/AppConfig.h")
+        current=app_config.read_text(encoding="utf-8")
+        if " #define   JUCE_ASIO 1" not in current:raise RuntimeError("ASIO_ENABLE_PATTERN_MISSING")
+        app_config.write_text(current.replace(" #define   JUCE_ASIO 1"," #define   JUCE_ASIO 0"),encoding="utf-8")
+        report["asio_optional_disabled"]=True
         report["stage"]="OPENSHOT_CMAKE_CONFIG"
         vcpkg_root=pathlib.Path(os.environ.get("VCPKG_INSTALLATION_ROOT",r"C:\\vcpkg"))
         vcpkg_exe=vcpkg_root/"vcpkg.exe"
