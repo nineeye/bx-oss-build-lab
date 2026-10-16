@@ -8,6 +8,7 @@ permissions:
   contents: read
 jobs:
   windows-order:
+    if: ${{ false }} # C0411 freeze old workflow to avoid billing/storage risk
     runs-on: windows-2025
     timeout-minutes: 45
     steps:
