@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   native-windows-x64:
-    if: ${{ false }} # C0411 zero-cost freeze: historical workflow disabled
+    if: ${{ false }} # C0411 freeze old workflow to avoid billing/storage risk
     runs-on: windows-2025
     timeout-minutes: 50
     defaults:
