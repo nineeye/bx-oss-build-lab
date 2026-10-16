@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   native-linux:
-    if: ${{ false }} # C0411 zero-cost freeze: historical workflow disabled
+    if: ${{ false }} # C0411 freeze old workflow to avoid billing/storage risk
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
