@@ -173,7 +173,7 @@ try:
         report["stage"]="OPENSHOT_AUDIO_NATIVE_BUILD"
         run(["cmake","--build","out-audio","--config","Release","--target","openshot-audio","--parallel","2"],600)
         report["stage"]="OPENSHOT_VIDEO_CMAKE_CONFIG"
-        run(["cmake","-S","libopenshot","-B","out-video","-A","x64","-DUSE_QT6=ON"],300)
+        run(["cmake","-S","libopenshot","-B","out-video","-A","x64","-DUSE_QT6=ON",f"-DOpenShotAudio_ROOT={pathlib.Path('out-audio').resolve()}",f"-DCMAKE_TOOLCHAIN_FILE={toolchain}"],300)
         report["stage"]="OPENSHOT_VIDEO_NATIVE_BUILD"
         run(["cmake","--build","out-video","--config","Release","--parallel","2"],600)
         report["status"]="PASS_COMPONENT_ONLY"
