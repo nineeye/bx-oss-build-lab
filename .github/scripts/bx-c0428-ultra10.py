@@ -52,7 +52,7 @@ def cmd(stage,args,seconds=240,cwd=None,required=True):
         report["steps"].append(spec)
         print("BX_STAGE "+stage+" END",flush=True)
 def clone(repo_url):
-    cmd("UPSTREAM_SHALLOW_CLONE",["git","clone","--depth","1","--filter=blob:none",repo_url,"source"],200)
+    cmd("UPSTREAM_SHALLOW_CLONE",["git","-c","core.longpaths=true","clone","--depth","1","--filter=blob:none",repo_url,"source"],200)
     v=cmd("UPSTREAM_COMMIT",["git","rev-parse","HEAD"],20,cwd="source")
     sha=v.strip().splitlines()[-1]
     if not re.fullmatch("[a-f0-9]{40}",sha):raise RuntimeError("UNVERIFIED_UPSTREAM_COMMIT")
@@ -83,14 +83,14 @@ try:
             cmd("INSTALL_SCONS",[sys.executable,"-m","pip","install","--disable-pip-version-check","SCons>=4.7,<5"],120)
             report["windows_native_build_attempted"]=True
             cmd("GODOT_NATIVE_CPP_COMPILE",[sys.executable,"-m","SCons","platform=windows",
-                 "target=template_release","arch=x86_64","lto=none","-j2"],500,cwd="source")
+                 "target=template_release","arch=x86_64","lto=none","accesskit=no","d3d12=no","angle=no","-j2"],500,cwd="source")
             exe=next(iter((pathlib.Path("source")/"bin").glob("godot.windows.template_release*.exe")),None)
             if not exe:raise RuntimeError("BUILT_GODOT_EXE_NOT_FOUND")
             cmd("GODOT_HEADLESS_RUN",[str(exe.absolute()),"--headless","--version"],60)
         elif case=="gimp":
             cmd("MESON_INSTALL",[sys.executable,"-m","pip","install","meson","ninja"],120)
             cmd("MESON_GTK_CONFIGURE",["meson","setup","native-build","source",
-                "--buildtype=release","-Dtests=false"],180)
+                "--buildtype=release"],180)
             report["windows_native_build_attempted"]=True
             cmd("MESON_NATIVE_BUILD",["meson","compile","-C","native-build","-j","2"],360)
         elif case=="tesseract":
@@ -105,7 +105,7 @@ try:
             if not candidates:raise RuntimeError("TESSERACT_EXE_NOT_FOUND")
             cmd("TESSERACT_NATIVE_RUNTIME",[str(candidates[0].absolute()),"--version"],60)
         elif case=="obs":
-            cmake_app(["-DENABLE_UI=OFF","-DENABLE_BROWSER=OFF","-DENABLE_PLUGINS=OFF"],"libobs")
+            cmake_app(["-DOBS_VERSION_OVERRIDE=32.0.0","-DENABLE_UI=OFF","-DENABLE_BROWSER=OFF","-DENABLE_PLUGINS=OFF"],"libobs")
         elif case=="freecad":
             cmake_app(["-DBUILD_GUI=OFF","-DBUILD_FEM=OFF","-DBUILD_TEST=OFF"])
         elif case=="qgis":
