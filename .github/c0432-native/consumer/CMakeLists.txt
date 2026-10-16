@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.28)
+project(BX_C0432_LINK LANGUAGES CXX)
+if(NOT DEFINED HANDOFF_OBJ OR NOT EXISTS "${HANDOFF_OBJ}")
+  message(FATAL_ERROR "Missing verified handoff object")
+endif()
+add_executable(bx_c0432_linked main.cpp "${HANDOFF_OBJ}")
+set_source_files_properties("${HANDOFF_OBJ}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+set_property(TARGET bx_c0432_linked PROPERTY CXX_STANDARD 17)
