@@ -1,0 +1,72 @@
+name: BX C0442 libuv Native Windows A-B Evidence
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/bx-c0442-libuv-real-native-ab.yml]
+permissions:
+  contents: read
+jobs:
+  public-native-ab:
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' }}
+    runs-on: windows-2025
+    timeout-minutes: 16
+    steps:
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Isolated libuv A and B native builds and real runtime smoke
+        shell: pwsh
+        timeout-minutes: 15
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: utf-8
+        run: |
+          $ErrorActionPreference='Stop'
+          $shaExpected='5152db2cbfeb5582e9c27c5ea1dba2cd9e10759b'
+          git clone --depth 1 --branch v1.51.0 https://github.com/libuv/libuv.git uv-src
+          if ($LASTEXITCODE -ne 0) {throw 'LIBUV_SOURCE_CLONE_FAIL'}
+          $sha=(git -C uv-src rev-parse HEAD).Trim()
+          if ($sha -cne $shaExpected) {throw ('LIBUV_SOURCE_SHA_DRIFT '+$sha)}
+          $results=@()
+          foreach($variant in @('A','B')){
+            $withTests=($variant -eq 'B')
+            $flag=if($withTests){'ON'}else{'OFF'}
+            $sw=[Diagnostics.Stopwatch]::StartNew()
+            cmake -S uv-src -B ("build-"+$variant) -A x64 "-DBUILD_TESTING=$flag" "-DLIBUV_BUILD_TESTS=$flag" -DLIBUV_BUILD_BENCH=OFF -DLIBUV_BUILD_SHARED=ON
+            if($LASTEXITCODE -ne 0){throw ('CMAKE_CONFIG_FAIL_'+$variant)}
+            $configureSeconds=[Math]::Round($sw.Elapsed.TotalSeconds,2)
+            cmake --build ("build-"+$variant) --config Release --target uv --parallel 2
+            if($LASTEXITCODE -ne 0){throw ('LIBUV_NATIVE_BUILD_FAIL_'+$variant)}
+            $testCount=0
+            if($withTests){
+              cmake --build ("build-"+$variant) --config Release --target uv_run_tests --parallel 2
+              if($LASTEXITCODE -ne 0){throw 'LIBUV_NATIVE_TEST_BUILD_FAIL'}
+              $runner=Get-ChildItem -Path ("build-"+$variant) -Filter 'uv_run_tests.exe' -Recurse -File | Select-Object -First 1
+              if(-not $runner){throw 'LIBUV_TEST_EXE_MISSING'}
+              & $runner.FullName loop_alive
+              if($LASTEXITCODE -ne 0){throw 'LIBUV_NATIVE_LOOP_TEST_FAIL'}
+              $testCount=1
+            }
+            $dll=Get-ChildItem -Path ("build-"+$variant) -Filter 'uv.dll' -Recurse -File | Select-Object -First 1
+            if(-not $dll){throw ('LIBUV_BUILT_DLL_MISSING_'+$variant)}
+            $env:BX_DLL_PATH=$dll.FullName
+            $env:BX_EXPECTED_VERSION='1.51.0'
+            $python = @'
+          import ctypes,os,json,pathlib
+          p=pathlib.Path(os.environ['BX_DLL_PATH']).resolve()
+          lib=ctypes.WinDLL(str(p))
+          v=lib.uv_version_string;v.restype=ctypes.c_char_p
+          values=[v().decode('ascii') for _ in range(2)]
+          print('BX_C0442_AB_RUNTIME '+json.dumps({'dll':str(p),'versions':values}))
+          assert values==[os.environ['BX_EXPECTED_VERSION']]*2
+          '@
+            [IO.File]::WriteAllText((Join-Path (Get-Location) 'uv_runtime_smoke.py'),$python,[Text.UTF8Encoding]::new($false))
+            python uv_runtime_smoke.py
+            if($LASTEXITCODE -ne 0){throw ('LIBUV_NATIVE_DLL_ABI_FAIL_'+$variant)}
+            $sw.Stop()
+            $results+=@{variant=$variant;status='PASS_NATIVE_DLL_ABI';additional_native_tests_passed=$testCount;tests_enabled=$withTests;configure_seconds=$configureSeconds;total_seconds=[Math]::Round($sw.Elapsed.TotalSeconds,2);dll_sha256=(Get-FileHash -LiteralPath $dll.FullName -Algorithm SHA256).Hash.ToLowerInvariant();dll_bytes=$dll.Length;runtime_version='1.51.0'}
+          }
+          if($results.Count -ne 2 -or $results[1].additional_native_tests_passed -ne 1){throw 'AB_INCOMPLETE'}
+          $proof=[ordered]@{schema='BX_C0442_LIBUV_NATIVE_AB_V1';status='PASS_TWO_NATIVE_DLL_ABI_BUILDS';run_id=$env:GITHUB_RUN_ID;source_repo='libuv/libuv';source_sha=$sha;source_tag='v1.51.0';variants=$results;selection_claim='ONLY_THIS_PUBLIC_LIBUV_EXPERIMENT';qgis_native_candidates_tested=$false;customer_release_approved=$false}
+          Write-Host ('BX_C0442_LIBUV_AB_RECEIPT '+($proof|ConvertTo-Json -Depth 8 -Compress))
