@@ -1,0 +1,45 @@
+name: BX C0426 Public Windows Hard10 OSS Builds
+# 10 independent public OSS workloads. No private BX/customer files; standard public runner only.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bx-c0426-public-hard10.yml
+permissions:
+  contents: read
+concurrency:
+  group: bx-c0426-public-hard10
+  cancel-in-progress: false
+jobs:
+  build:
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' }}
+    runs-on: windows-2025
+    timeout-minutes: 28
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        workload: [napari, ocrmypdf, openshot, labelme, rapidocr, opencv, pyarrow, scipy, pyside6, matplotlib]
+    steps:
+      - name: Checkout public controller code only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install Python 3.12 x64
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Actual Windows native OSS EXE build and relocated runtime checks
+        shell: pwsh
+        timeout-minutes: 26
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: utf-8
+          PIP_NO_INPUT: '1'
+          PIP_DISABLE_PIP_VERSION_CHECK: '1'
+          QT_QPA_PLATFORM: offscreen
+          MPLBACKEND: Agg
+        run: |
+          python .github/scripts/bx-c0426-public-hard10.py ${{ matrix.workload }}
+          if ($LASTEXITCODE -ne 0) { throw "PUBLIC_HARD10_FAILED_${{ matrix.workload }}" }
