@@ -72,12 +72,18 @@ jobs:
           $pass=($exitCode -eq 0 -and $source.status -eq 'PASS' -and $frozen.status -eq 'PASS' -and $before -eq $after)
           $receipt=[ordered]@{schema='BX_C0403_NAPARI_WINDOWS_PUBLIC_RECEIPT';source_status=$source.status;frozen_status=$frozen.status;frozen_reason=$frozen.reason;exit_code=$frozen.exit_code;error_categories=$frozen.categories;exe_hash_before=$before;exe_hash_after=$after;public_napari_test_pass=$pass;private_bx_engine_tested=$false;full_napari_gui_certified=$false;commercial_release_approved=$false;github_run_id=$env:GITHUB_RUN_ID;github_run_attempt=$env:GITHUB_RUN_ATTEMPT}
           $receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'bx-c0403-receipt.json') -Encoding utf8
+          $reviewPath=Join-Path $env:RUNNER_TEMP 'bx-c0404-review.json'
+          python .github/scripts/bx-c0404-windows-result-review.py --source-json (Join-Path $env:RUNNER_TEMP 'bx-c0403-source.json') --exe-json (Join-Path $env:RUNNER_TEMP 'bx-c0403-exe.json') --before-sha256 $before --after-sha256 $after --run-id $env:GITHUB_RUN_ID --run-attempt $env:GITHUB_RUN_ATTEMPT --json-out $reviewPath
+          $reviewExit=$LASTEXITCODE
+          if ($reviewExit -ne 0) { throw 'NAPARI_C0404_REVIEW_BLOCKED' }
           if (-not $pass) { throw 'NAPARI_FROZEN_RUNTIME_INCOMPLETE' }
       - name: Upload small public diagnostic evidence only
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: bx-c0403-public-napari-${{ github.run_id }}
-          path: ${{ runner.temp }}/bx-c0403-*.json
+          path: |
+            ${{ runner.temp }}/bx-c0403-*.json
+            ${{ runner.temp }}/bx-c0404-review.json
           if-no-files-found: warn
           retention-days: 7
