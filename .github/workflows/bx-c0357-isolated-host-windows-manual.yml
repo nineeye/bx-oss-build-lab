@@ -8,6 +8,7 @@ permissions:
   contents: read
 jobs:
   isolated-host:
+    if: ${{ false }} # C0411 freeze old workflow to avoid billing/storage risk
     runs-on: windows-2025
     timeout-minutes: 50
     env:
