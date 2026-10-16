@@ -1,0 +1,84 @@
+name: BX C0443 FMT Real Windows ABBA BAAB
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/bx-c0443-fmt-crossover.yml]
+permissions:
+  contents: read
+jobs:
+  public-fmt-crossover:
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' }}
+    runs-on: windows-2025
+    timeout-minutes: 13
+    strategy:
+      fail-fast: false
+      matrix:
+        order: [ABBA, BAAB]
+    steps:
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Native pinned public fmt repeated cold-build crossover
+        shell: pwsh
+        timeout-minutes: 12
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: utf-8
+        run: |
+          $ErrorActionPreference='Stop'
+          $expected='40626af88bd7df9a5fb80be7b25ac85b122d6c21'
+          $order='${{ matrix.order }}'
+          if ($order -notin @('ABBA','BAAB')) {throw 'INVALID_ORDER'}
+          git clone --depth 1 --branch 11.2.0 https://github.com/fmtlib/fmt.git fmt-src
+          if($LASTEXITCODE -ne 0){throw 'SOURCE_FETCH_FAIL'}
+          $sha=(git -C fmt-src rev-parse HEAD).Trim()
+          if($sha -cne $expected){throw ('SOURCE_PIN_MISMATCH '+$sha)}
+          $cm=@'
+          cmake_minimum_required(VERSION 3.22)
+          project(BXPublicFmtCrossover LANGUAGES CXX)
+          enable_testing()
+          add_subdirectory(fmt-src)
+          add_executable(bx_fmt_probe bx_fmt_probe.cpp)
+          target_link_libraries(bx_fmt_probe PRIVATE fmt::fmt)
+          '@
+          $cpp=@'
+          #include <fmt/format.h>
+          #include <iostream>
+          int main() { std::cout << fmt::format("BX_FMT_AB_{}",42) << "\n"; return 0; }
+          '@
+          [IO.File]::WriteAllText((Join-Path (Get-Location) 'CMakeLists.txt'),$cm,[Text.UTF8Encoding]::new($false))
+          [IO.File]::WriteAllText((Join-Path (Get-Location) 'bx_fmt_probe.cpp'),$cpp,[Text.UTF8Encoding]::new($false))
+          $results=@()
+          for($i=0;$i -lt 4;$i++){
+            $v=[string]$order[$i]
+            $name=("build-"+$order+"-"+($i+1))
+            $flag=if($v -eq 'B'){'ON'}else{'OFF'}
+            $clock=[Diagnostics.Stopwatch]::StartNew()
+            cmake -S . -B $name -A x64 "-DFMT_TEST=$flag" -DFMT_DOC=OFF -DFMT_INSTALL=OFF
+            if($LASTEXITCODE -ne 0){throw ('CMAKE_CONFIG_FAIL_'+$name)}
+            $configSeconds=$clock.Elapsed.TotalSeconds
+            cmake --build $name --config Release --target bx_fmt_probe --parallel 2
+            if($LASTEXITCODE -ne 0){throw ('CMAKE_PROBE_BUILD_FAIL_'+$name)}
+            $exe=Join-Path (Get-Location) ($name+"\Release\bx_fmt_probe.exe")
+            if(!(Test-Path -LiteralPath $exe)){throw 'NATIVE_EXE_MISSING'}
+            $out=(& $exe | Out-String).Trim()
+            if($LASTEXITCODE -ne 0 -or $out -ne 'BX_FMT_AB_42'){throw ('NATIVE_EXE_RUNTIME_FAIL_'+$name)}
+            $tests=0
+            if($v -eq 'B'){
+              cmake --build $name --config Release --target format-test --parallel 2
+              if($LASTEXITCODE -ne 0){throw 'FORMAT_TEST_BUILD_FAIL'}
+              ctest --test-dir $name -C Release -R '^format-test$' --output-on-failure
+              if($LASTEXITCODE -ne 0){throw 'FORMAT_TEST_EXEC_FAIL'}
+              $tests=1
+            }
+            $clock.Stop()
+            $receipt=@{position=$i+1;variant=$v;status='PASS_NATIVE_BUILD_RUNTIME';configure_seconds=[Math]::Round($configSeconds,2);total_seconds=[Math]::Round($clock.Elapsed.TotalSeconds,2);additional_native_tests_passed=$tests;exe_sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant();exe_bytes=(Get-Item -LiteralPath $exe).Length}
+            $results+= $receipt
+            Write-Host ('BX_C0443_SAMPLE '+($receipt|ConvertTo-Json -Compress))
+          }
+          if($results.Count -ne 4){throw 'MISSING_SAMPLES'}
+          if(@($results|Where-Object { $_.variant -eq 'A'}).Count -ne 2){throw 'BAD_A_COUNTS'}
+          if(@($results|Where-Object { $_.variant -eq 'B'}).Count -ne 2){throw 'BAD_B_COUNTS'}
+          $proof=[ordered]@{schema='BX_C0443_PUBLIC_FMT_CROSSOVER_V1';status='PASS_FOUR_NATIVE_SAMPLES';public_repo='fmtlib/fmt';upstream_ref='11.2.0';upstream_sha=$sha;run_id=$env:GITHUB_RUN_ID;job_id=$env:GITHUB_JOB;sequence=$order;samples=$results;customer_release_approved=$false;benchmark_limitation='TWO_GITHUB_WINDOWS_RUNNER_JOBS_ONLY'}
+          Write-Host ('BX_C0443_CROSSOVER_RECEIPT '+($proof|ConvertTo-Json -Depth 8 -Compress))
