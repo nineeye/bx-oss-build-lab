@@ -1,0 +1,37 @@
+name: BX C0427 Free Windows Napari OpenShot Recovery
+# Public upstream only; do not upload or checkout private BX PRO or customer material.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bx-c0427-recover-two.yml
+permissions:
+  contents: read
+jobs:
+  recover:
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' }}
+    runs-on: windows-2025
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        workload: [napari, openshot]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Native public OSS build and functional checks
+        shell: pwsh
+        timeout-minutes: 23
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: utf-8
+          PIP_NO_INPUT: '1'
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python .github/scripts/bx-c0426-public-hard10.py ${{ matrix.workload }}
+          if ($LASTEXITCODE -ne 0) { throw "C0427_FAILED_${{ matrix.workload }}" }
