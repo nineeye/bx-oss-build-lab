@@ -5,7 +5,7 @@ import hashlib, json, os, pathlib, shutil, subprocess, sys, tempfile, time, trac
 CASES = {
     "napari": {
       "packages": ["napari[all]==0.9.2"],
-      "collect": ["napari", "vispy", "magicgui", "qtpy", "superqt"],
+      "collect": ["napari", "napari_resources", "vispy", "magicgui", "qtpy", "superqt"],
       "src": """import os
 os.environ['QT_QPA_PLATFORM']='offscreen'
 import numpy as np, napari
@@ -171,7 +171,7 @@ try:
         if not toolchain.is_file():raise RuntimeError("VCPKG_CMAKE_TOOLCHAIN_MISSING")
         run(["cmake","-S","libopenshot-audio","-B","out-audio","-A","x64",f"-DCMAKE_TOOLCHAIN_FILE={toolchain}","-DCMAKE_SHARED_LINKER_FLAGS=/DEFAULTLIB:Dbghelp.lib"],300)
         report["stage"]="OPENSHOT_AUDIO_NATIVE_BUILD"
-        run(["cmake","--build","out-audio","--config","Release","--parallel","2"],600)
+        run(["cmake","--build","out-audio","--config","Release","--target","openshot-audio","--parallel","2"],600)
         report["stage"]="OPENSHOT_VIDEO_CMAKE_CONFIG"
         run(["cmake","-S","libopenshot","-B","out-video","-A","x64","-DUSE_QT6=ON"],300)
         report["stage"]="OPENSHOT_VIDEO_NATIVE_BUILD"
@@ -197,6 +197,8 @@ try:
              "--name","BX_HARD10_"+case]
         for module in spec["collect"]:
             cmd+=["--collect-all",module]
+        if case == "napari":
+            cmd+=["--hidden-import", "napari_resources.resources", "--collect-data", "napari_resources"]
         cmd+=[str(work)]
         build_start=time.monotonic();run(cmd,600,env)
         report["build_seconds"]=round(time.monotonic()-build_start,2)
