@@ -1,0 +1,82 @@
+name: BX C0444 libuv Real Windows ABBA BAAB
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/bx-c0444-libuv-crossover.yml]
+permissions:
+  contents: read
+jobs:
+  public-libuv-crossover:
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' }}
+    runs-on: windows-2025
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        order: [ABBA, BAAB]
+    steps:
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Public libuv pinned source native Windows crossover 4 cold-build samples
+        shell: pwsh
+        timeout-minutes: 14
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: utf-8
+        run: |
+          $ErrorActionPreference='Stop'
+          $order='${{ matrix.order }}'
+          if ($order -notin @('ABBA','BAAB')) {throw 'UNEXPECTED_ORDER'}
+          $expected='5152db2cbfeb5582e9c27c5ea1dba2cd9e10759b'
+          git clone --depth 1 --branch v1.51.0 https://github.com/libuv/libuv.git uv-src
+          if ($LASTEXITCODE -ne 0) {throw 'SOURCE_CLONE_FAILED'}
+          $sha=(git -C uv-src rev-parse HEAD).Trim()
+          if ($sha -cne $expected) {throw ('SOURCE_SHA_PIN_FAILED '+$sha)}
+          $results=@()
+          for($i=0; $i -lt 4; $i++) {
+            $v=[string]$order[$i]
+            $withTests=($v -eq 'B')
+            $flag=if($withTests){'ON'}else{'OFF'}
+            $folder=("build-"+$order+"-"+($i+1))
+            $timer=[Diagnostics.Stopwatch]::StartNew()
+            cmake -S uv-src -B $folder -A x64 "-DBUILD_TESTING=$flag" "-DLIBUV_BUILD_TESTS=$flag" -DLIBUV_BUILD_BENCH=OFF -DLIBUV_BUILD_SHARED=ON
+            if($LASTEXITCODE -ne 0){throw ('CMAKE_CONFIG_FAILED_'+$folder)}
+            $confSeconds=[Math]::Round($timer.Elapsed.TotalSeconds,2)
+            cmake --build $folder --config Release --target uv --parallel 2
+            if($LASTEXITCODE -ne 0){throw ('NATIVE_DLL_BUILD_FAILED_'+$folder)}
+            $tests=0
+            if($withTests){
+              cmake --build $folder --config Release --target uv_run_tests --parallel 2
+              if($LASTEXITCODE -ne 0){throw 'NATIVE_TEST_BUILD_FAILED'}
+              $runner=Get-ChildItem -Path $folder -Filter 'uv_run_tests.exe' -Recurse -File | Select-Object -First 1
+              if(-not $runner){throw 'TEST_EXE_NOT_FOUND'}
+              & $runner.FullName loop_alive
+              if($LASTEXITCODE -ne 0){throw 'NATIVE_LOOP_TEST_FAILED'}
+              $tests=1
+            }
+            $dll=Get-ChildItem -Path $folder -Filter 'uv.dll' -Recurse -File | Select-Object -First 1
+            if(-not $dll){throw 'BUILT_DLL_NOT_FOUND'}
+            $env:BX_UV_PATH=$dll.FullName
+            $python=@'
+          import ctypes,json,os,pathlib
+          p=pathlib.Path(os.environ['BX_UV_PATH']).resolve()
+          lib=ctypes.WinDLL(str(p))
+          getter=lib.uv_version_string
+          getter.restype=ctypes.c_char_p
+          vv=[getter().decode('ascii') for _ in range(2)]
+          assert vv==['1.51.0','1.51.0'],vv
+          print('BX_C0444_LIBUV_ABI '+json.dumps({'versions':vv,'status':'PASS_NATIVE_ABI'}))
+          '@
+            [IO.File]::WriteAllText((Join-Path (Get-Location) 'c0444_uv_abi.py'),$python,[Text.UTF8Encoding]::new($false))
+            python c0444_uv_abi.py
+            if($LASTEXITCODE -ne 0){throw 'ACTUAL_DLL_ABI_FAILED'}
+            $timer.Stop()
+            $item=[ordered]@{position=$i+1;variant=$v;status='PASS_NATIVE_DLL_ABI';configure_seconds=$confSeconds;total_seconds=[Math]::Round($timer.Elapsed.TotalSeconds,2);additional_native_tests_passed=$tests;dll_bytes=$dll.Length;dll_sha256=(Get-FileHash -LiteralPath $dll.FullName -Algorithm SHA256).Hash.ToLowerInvariant();runtime_version='1.51.0'}
+            $results+= $item
+            Write-Host ('BX_C0444_LIBUV_SAMPLE '+($item|ConvertTo-Json -Compress))
+          }
+          if ($results.Count -ne 4 -or @($results|Where-Object {$_.variant -eq 'A'}).Count -ne 2 -or @($results|Where-Object {$_.variant -eq 'B'}).Count -ne 2) {throw 'NOT_ENOUGH_SAMPLES'}
+          $proof=[ordered]@{schema='BX_C0444_PUBLIC_LIBUV_CROSSOVER_V1';status='PASS_FOUR_NATIVE_DLL_SAMPLES';public_repo='libuv/libuv';upstream_ref='v1.51.0';upstream_sha=$sha;run_id=$env:GITHUB_RUN_ID;job_id=$env:GITHUB_JOB;sequence=$order;samples=$results;customer_release_approved=$false;benchmark_limitation='TWO_PUBLIC_WINDOWS_JOBS_ONLY'}
+          Write-Host ('BX_C0444_LIBUV_CROSSOVER_RECEIPT '+($proof|ConvertTo-Json -Depth 8 -Compress))
