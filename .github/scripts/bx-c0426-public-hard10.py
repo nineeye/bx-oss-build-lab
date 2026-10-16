@@ -38,12 +38,12 @@ print('BX_HARD10_PASS')
     },
     "labelme": {
       "packages": ["labelme==7.8.1"],
-      "collect": ["labelme", "PyQt6"],
+      "collect": ["labelme", "PySide6"],
       "src": """import os
 os.environ['QT_QPA_PLATFORM']='offscreen'
 import numpy as np
 import labelme
-from PyQt6.QtWidgets import QApplication,QLabel
+from PySide6.QtWidgets import QApplication,QLabel
 app=QApplication([])
 w=QLabel('한글 Labelme Qt')
 mask=np.zeros((20,20),dtype=bool);mask[2:12,2:12]=True
@@ -169,7 +169,7 @@ try:
         run([str(vcpkg_exe),"install","zlib:x64-windows"],600)
         toolchain=vcpkg_root/"scripts"/"buildsystems"/"vcpkg.cmake"
         if not toolchain.is_file():raise RuntimeError("VCPKG_CMAKE_TOOLCHAIN_MISSING")
-        run(["cmake","-S","libopenshot-audio","-B","out-audio","-A","x64",f"-DCMAKE_TOOLCHAIN_FILE={toolchain}"],300)
+        run(["cmake","-S","libopenshot-audio","-B","out-audio","-A","x64",f"-DCMAKE_TOOLCHAIN_FILE={toolchain}","-DCMAKE_SHARED_LINKER_FLAGS=/DEFAULTLIB:Dbghelp.lib"],300)
         report["stage"]="OPENSHOT_AUDIO_NATIVE_BUILD"
         run(["cmake","--build","out-audio","--config","Release","--parallel","2"],600)
         report["stage"]="OPENSHOT_VIDEO_CMAKE_CONFIG"
