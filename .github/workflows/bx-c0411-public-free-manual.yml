@@ -1,0 +1,76 @@
+name: BX C0411 ZERO COST Public Windows Engine Build (Manual)
+# Public synthetic project only. No private source, paid cloud API, caches or uploaded artifacts.
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        required: true
+        type: string
+        description: "Type I_APPROVE_C0411_FREE_PUBLIC to run on the free public standard Windows runner"
+      engine:
+        required: true
+        type: choice
+        options: [pyinstaller, nuitka, cx-freeze]
+permissions:
+  contents: read
+concurrency:
+  group: bx-c0411-free-public
+  cancel-in-progress: false
+jobs:
+  free-windows-build:
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' && github.actor == 'nineeye' && inputs.approval == 'I_APPROVE_C0411_FREE_PUBLIC' }}
+    runs-on: windows-2025
+    timeout-minutes: 50
+    steps:
+      - name: Prepare free Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Build and check public synthetic invoice program
+        shell: pwsh
+        timeout-minutes: 45
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: 'utf-8'
+          PIP_NO_INPUT: '1'
+          PIP_DISABLE_PIP_VERSION_CHECK: '1'
+        run: |
+          $ErrorActionPreference='Stop'
+          $engine='${{ inputs.engine }}'
+          $code=@'
+          import csv,decimal,hashlib,io,json
+          rows=[('볼트A',3,15700),('상자B',2,8300),('나사C',10,240)]
+          total=sum(decimal.Decimal(q)*decimal.Decimal(p) for _,q,p in rows)
+          assert total==decimal.Decimal(66100)
+          buf=io.StringIO(newline='')
+          writer=csv.writer(buf);writer.writerow(('품목','수량','단가'));writer.writerows(rows)
+          data=buf.getvalue().encode('utf-8-sig')
+          print('BX_C0411_SAMPLE_PASS '+json.dumps({'total':int(total),'sha256':hashlib.sha256(data).hexdigest()},sort_keys=True))
+          '@
+          [IO.File]::WriteAllText((Join-Path (Get-Location) 'bx_sample.py'),$code,[Text.UTF8Encoding]::new($false))
+          $expected=(& python bx_sample.py | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $expected.StartsWith('BX_C0411_SAMPLE_PASS ')) {throw 'SOURCE_FAIL'}
+          if ($engine -eq 'pyinstaller') {python -m pip install 'PyInstaller==6.22.3'}
+          elseif ($engine -eq 'nuitka') {python -m pip install 'Nuitka==4.3' ordered-set zstandard}
+          elseif ($engine -eq 'cx-freeze') {python -m pip install 'cx-Freeze==8.7.2'}
+          else {throw 'UNKNOWN_ENGINE'}
+          if ($LASTEXITCODE -ne 0) {throw 'ENGINE_INSTALL_FAIL'}
+          $watch=[Diagnostics.Stopwatch]::StartNew()
+          if ($engine -eq 'pyinstaller') {python -m PyInstaller --noconfirm --clean --onedir --name bx_sample bx_sample.py}
+          elseif ($engine -eq 'nuitka') {python -m nuitka --mode=standalone --msvc=latest --output-dir=dist bx_sample.py}
+          else {cxfreeze --script=bx_sample.py --target-name=bx_sample --target-dir=dist/cx_sample}
+          $code=$LASTEXITCODE;$watch.Stop()
+          if ($code -ne 0) {throw 'WINDOWS_BUILD_FAIL'}
+          $list=@(Get-ChildItem -LiteralPath dist -Recurse -File -Filter bx_sample.exe)
+          if ($list.Count -ne 1) {throw 'BUILT_EXE_NOT_UNIQUE'}
+          $exe=$list[0]
+          $target=Join-Path $env:RUNNER_TEMP '한글 and spaces'
+          New-Item -ItemType Directory -Path $target -Force | Out-Null
+          Copy-Item -Path (Join-Path $exe.Directory.FullName '*') -Destination $target -Recurse -Force
+          $moved=Join-Path $target 'bx_sample.exe'
+          if (-not (Test-Path -LiteralPath $moved -PathType Leaf)) {throw 'RELOCATED_EXE_MISSING'}
+          $actual=(& $moved | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -ne $expected) {throw 'FROZEN_FUNCTIONAL_MISMATCH'}
+          $hash=(Get-FileHash -LiteralPath $moved -Algorithm SHA256).Hash
+          Write-Host ('C0411_FREE_RESULT engine={0} status=PASS build_seconds={1} exe_bytes={2} sha256={3}' -f $engine,([Math]::Round($watch.Elapsed.TotalSeconds,2)),$exe.Length,$hash)
