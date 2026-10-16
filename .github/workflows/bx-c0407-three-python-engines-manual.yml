@@ -15,7 +15,7 @@ permissions:
   contents: read
 jobs:
   build:
-    if: ${{ github.actor == 'nineeye' && inputs.approval == 'I_APPROVE_BX_C0407_ENGINES' }}
+    if: ${{ false }} # C0411 freeze old workflow to avoid billing/storage risk
     runs-on: windows-2025
     timeout-minutes: 75
     steps:
