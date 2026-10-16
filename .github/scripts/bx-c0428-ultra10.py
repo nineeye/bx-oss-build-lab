@@ -80,7 +80,7 @@ try:
     else:
         clone(repo)
         if case=="godot":
-            cmd("INSTALL_SCONS",[sys.executable,"-m","pip","install","--disable-pip-version-check","SCons>=4.7,<5"],120)
+            cmd("INSTALL_SCONS",[sys.executable,"-m","pip","install","--disable-pip-version-check","SCons>=4.7,<5","zstandard"],120)
             report["windows_native_build_attempted"]=True
             cmd("GODOT_NATIVE_CPP_COMPILE",[sys.executable,"-m","SCons","platform=windows",
                  "target=template_release","arch=x86_64","lto=none","accesskit=no","d3d12=no","angle=no","-j2"],500,cwd="source")
@@ -109,7 +109,7 @@ try:
         elif case=="freecad":
             cmake_app(["-DBUILD_GUI=OFF","-DBUILD_FEM=OFF","-DBUILD_TEST=OFF"])
         elif case=="qgis":
-            cmake_app(["-DWITH_GUI=OFF","-DWITH_SERVER=OFF","-DWITH_QTWEBKIT=OFF"])
+            cmake_app(["-DWITH_GUI=OFF","-DWITH_DESKTOP=OFF","-DWITH_SERVER=OFF","-DWITH_QTWEBKIT=OFF"])
         elif case=="kicad":
             cmake_app(["-DKICAD_BUILD_QA_TESTS=OFF","-DKICAD_BUILD_I18N=OFF"])
         elif case=="blender":
