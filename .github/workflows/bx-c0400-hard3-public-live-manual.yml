@@ -54,7 +54,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'PIP_BUILDER_INSTALL_FAIL' }
             if ($case -eq 'napari') {
               $stage='NAPARI_INSTALL'
-              python -m pip install 'napari[all]==0.10.0'
+              python -m pip install 'napari[all]==0.9.2'
               if ($LASTEXITCODE -ne 0) { throw 'NAPARI_INSTALL_FAIL' }
               python -c "import base64;open('napari_probe.py','wb').write(base64.b64decode('aW1wb3J0IG9zCm9zLmVudmlyb24uc2V0ZGVmYXVsdCgnUVRfUVBBX1BMQVRGT1JNJywgJ29mZnNjcmVlbicpCmltcG9ydCBudW1weSBhcyBucAppbXBvcnQgbmFwYXJpCnYgPSBuYXBhcmkuVmlld2VyKHNob3c9RmFsc2UpCmxheWVyID0gdi5hZGRfaW1hZ2UobnAuYXJhbmdlKDEwMCwgZHR5cGU9bnAudWludDgpLnJlc2hhcGUoMTAsMTApKQphc3NlcnQgdHVwbGUobGF5ZXIuZGF0YS5zaGFwZSkgPT0gKDEwLDEwKQphc3NlcnQgaW50KGxheWVyLmRhdGFbOSw5XSkgPT0gOTkKdi5jbG9zZSgpCnByaW50KCdCWF9OQVBBUklfRlVOQ1RJT05BTF9QQVNTJykK'))"
               $stage='NAPARI_EXE_BUILD'
