@@ -1,0 +1,101 @@
+name: BX C0432 Public Windows Cross-Runner COFF Handoff
+# Public synthetic C++ only. 1-day small artifact. No private code or paid runners.
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/bx-c0432-cross-runner.yml]
+permissions:
+  contents: read
+concurrency:
+  group: bx-c0432-cross-runner
+  cancel-in-progress: false
+jobs:
+  producer:
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' }}
+    runs-on: windows-2025
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Compile actual MSVC x64 COFF object and create integrity manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          cmake -S .github/c0432-native/producer -B c0432-obj-build -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'OBJECT_CMAKE_CONFIG_FAILED' }
+          cmake --build c0432-obj-build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'OBJECT_REAL_MSVC_COMPILE_FAILED' }
+          $obj=Get-ChildItem c0432-obj-build -Recurse -Filter bx_cached.cpp.obj -File | Select-Object -First 1
+          if (-not $obj) { throw 'WINDOWS_COFF_OBJECT_MISSING' }
+          if ($obj.Length -lt 32 -or $obj.Length -gt 3145728) { throw 'OBJECT_SIZE_OUTSIDE_SAFE_BUDGET' }
+          $bytes=[IO.File]::ReadAllBytes($obj.FullName)
+          if ($bytes[0] -ne 100 -or $bytes[1] -ne 134) { throw 'NOT_X64_COFF_OBJECT' }
+          New-Item -ItemType Directory -Path c0432-transfer | Out-Null
+          Copy-Item -LiteralPath $obj.FullName -Destination c0432-transfer/bx_cached.cpp.obj
+          $hash=(Get-FileHash c0432-transfer/bx_cached.cpp.obj -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sourcehash=(Get-FileHash .github/c0432-native/bx_cached.cpp -Algorithm SHA256).Hash.ToLowerInvariant()
+          $receipt=[ordered]@{schema='BX_C0432_COFF_CROSS_RUNNER_V1';repo=$env:GITHUB_REPOSITORY;run_id=$env:GITHUB_RUN_ID;commit=$env:GITHUB_SHA;recipe='MSVC_X64_RELEASE_OBJECT_V1';source_sha256=$sourcehash;object_sha256=$hash;object_bytes=$obj.Length;status='STAGED_INTEGRITY_ONLY';customer_release_approved=$false}
+          [IO.File]::WriteAllText((Join-Path (Get-Location) 'c0432-transfer/handoff.json'),($receipt | ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
+          Write-Host ('BX_C0432_PRODUCER ' + ($receipt | ConvertTo-Json -Compress))
+      - name: Save bounded one-day public C++ object
+        uses: actions/upload-artifact@v4
+        with:
+          name: bx-c0432-public-object
+          path: c0432-transfer/
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
+  consumer:
+    needs: producer
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' }}
+    runs-on: windows-2025
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Restore object on a distinct clean Windows job
+        uses: actions/download-artifact@v4
+        with:
+          name: bx-c0432-public-object
+          path: c0432-transfer/
+      - name: Fail-closed source/COFF hash identity, real native link and Korean runtime twice
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $dir=Join-Path (Get-Location) 'c0432-transfer'
+          $names=@(Get-ChildItem -LiteralPath $dir -File | ForEach-Object Name | Sort-Object)
+          if (($names -join ',') -cne 'bx_cached.cpp.obj,handoff.json') { throw 'HANDOFF_EXTRA_OR_MISSING_FILES' }
+          $receipt=Get-Content -LiteralPath (Join-Path $dir 'handoff.json') -Raw | ConvertFrom-Json -AsHashtable
+          $expected=@('schema','repo','run_id','commit','recipe','source_sha256','object_sha256','object_bytes','status','customer_release_approved') | Sort-Object
+          if ((@($receipt.Keys | Sort-Object) -join ',') -cne ($expected -join ',')) {throw 'HANDOFF_SCHEMA_DRIFT'}
+          if ($receipt.schema -cne 'BX_C0432_COFF_CROSS_RUNNER_V1' -or $receipt.repo -cne 'nineeye/bx-oss-build-lab' -or $receipt.run_id -cne $env:GITHUB_RUN_ID -or $receipt.commit -cne $env:GITHUB_SHA -or $receipt.recipe -cne 'MSVC_X64_RELEASE_OBJECT_V1' -or $receipt.status -cne 'STAGED_INTEGRITY_ONLY' -or $receipt.customer_release_approved -ne $false) {throw 'HANDOFF_IDENTITY_DRIFT'}
+          $sourcehash=(Get-FileHash .github/c0432-native/bx_cached.cpp -Algorithm SHA256).Hash.ToLowerInvariant()
+          $objpath=Join-Path $dir 'bx_cached.cpp.obj'
+          $obj=Get-Item -LiteralPath $objpath
+          if ($obj.Length -lt 32 -or $obj.Length -gt 3145728 -or $obj.Length -ne $receipt.object_bytes) {throw 'HANDOFF_OBJECT_SIZE_CHANGED'}
+          $bytes=[IO.File]::ReadAllBytes($obj.FullName)
+          if ($bytes[0] -ne 100 -or $bytes[1] -ne 134) {throw 'NOT_AMD64_COFF'}
+          $hash=(Get-FileHash $objpath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -cne $receipt.object_sha256 -or $sourcehash -cne $receipt.source_sha256) { throw 'HANDOFF_HASH_MISMATCH' }
+          Write-Host ('BX_C0432_RESTORED_VERIFIED object_sha256=' + $hash)
+          cmake -S .github/c0432-native/consumer -B c0432-link-build -A x64 "-DHANDOFF_OBJ=$objpath"
+          if ($LASTEXITCODE -ne 0) {throw 'CROSS_RUNNER_CMAKE_LINK_CONFIG_FAILED'}
+          cmake --build c0432-link-build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) {throw 'CROSS_RUNNER_NATIVE_LINK_FAILED'}
+          $exe=Get-ChildItem c0432-link-build -Recurse -Filter bx_c0432_linked.exe -File | Select-Object -First 1
+          if (-not $exe) {throw 'CROSS_RUNNER_EXE_MISSING'}
+          $target=Join-Path $env:RUNNER_TEMP 'BX 한글 공백 C0432'
+          New-Item -ItemType Directory -Path $target -Force | Out-Null
+          $moved=Join-Path $target 'bx_c0432_linked.exe'
+          Copy-Item -LiteralPath $exe.FullName -Destination $moved -Force
+          $exehash=(Get-FileHash -LiteralPath $moved -Algorithm SHA256).Hash.ToLowerInvariant()
+          foreach ($i in 1,2) {
+            $output=(& $moved | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or $output -cne 'BX_C0432_CROSS_RUNNER_PASS 4321') {throw "CROSS_RUNNER_REAL_EXE_FAILED_$i"}
+            if ((Get-FileHash -LiteralPath $moved -Algorithm SHA256).Hash.ToLowerInvariant() -cne $exehash) {throw 'EXE_MUTATED_AFTER_RUN'}
+          }
+          if ((Get-FileHash -LiteralPath $objpath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $hash) {throw 'SOURCE_OBJECT_CHANGED_DURING_LINK'}
+          $proof=[ordered]@{schema='BX_C0432_WINDOWS_CROSS_RUNNER_PROOF_V1';status='PASS_REAL_WINDOWS';producer_object_sha256=$hash;exe_sha256=$exehash;run_id=$env:GITHUB_RUN_ID;head_sha=$env:GITHUB_SHA;two_separate_windows_jobs=$true;linked_from_restored_object=$true;korean_path_runs=2;customer_release_approved=$false;private_bx_certified=$false}
+          Write-Host ('BX_C0432_CROSS_RUNNER_PROOF ' + ($proof | ConvertTo-Json -Compress))
