@@ -116,7 +116,23 @@ def inspect_run(log_root: Path, *, run_id: str, conclusion: str) -> dict[str, An
             evidence = parsed["evidence"]
             severity = {"critical": 4, "high": 3, "medium": 2, "info": 1}
             strongest = max((severity[e["severity"]] for e in evidence), default=0)
-            candidates.append((strongest, -phase_index, name, meta, parsed))
+            probe = None
+            # Real C0509 case: LLVM/Lld compiled successfully, but the generic
+            # 'lld' dispatcher was wrongly used to check ld.lld's version.
+            lower = content.lower()
+            if (name == "06_lld_version.log"
+                    and "lld is a generic driver." in lower
+                    and "invoke ld.lld" in lower):
+                probe = {
+                    "category": "wrong_lld_driver_probe",
+                    "line": next(
+                        (i for i, line in enumerate(content.splitlines(), 1)
+                         if "lld is a generic driver." in line.lower()), 1),
+                    "action_ko": "범용 lld가 아니라 ld.lld --version으로 검증하세요.",
+                    "proof": "Exact generic-driver hint in 06_lld_version.log",
+                }
+            candidates.append((max(strongest, 5 if probe else 0),
+                               -phase_index, name, meta, parsed, probe))
     # Prefer a grounded error rather than a clean build log from an earlier step.
     # When no known error exists, select the furthest available pipeline phase.
     candidates.sort(key=lambda c: (c[0], c[1]), reverse=True)
@@ -140,7 +156,7 @@ def inspect_run(log_root: Path, *, run_id: str, conclusion: str) -> dict[str, An
             "selected_log": None, "diagnosis": None,
         })
         return report
-    _, _, selected, meta, diagnosis = candidates[0]
+    _, _, selected, meta, diagnosis, probe = candidates[0]
     if conclusion == "success":
         state = "workflow_reported_success_unverified"
         summary = "GitHub 작업은 성공으로 보고됐지만, 상용화 합격은 별도로 검증해야 합니다."
@@ -154,9 +170,11 @@ def inspect_run(log_root: Path, *, run_id: str, conclusion: str) -> dict[str, An
         state = "workflow_conclusion_unverified"
         summary = "GitHub 실행 결론이 확정적이지 않습니다. 원본 작업 상태를 확인하세요."
     top = diagnosis["evidence"][:1]
-    if top:
+    if probe:
+        summary += " LLD를 범용 드라이버 이름으로 실행한 버전 검사 문제가 확인됐습니다."
+    elif top:
         summary += " " + CATEGORY_KO.get(top[0]["category"], "확인할 오류 신호가 있습니다.")
-    actions = diagnosis["action_guidance_ko"][:4] or [
+    actions = ([probe["action_ko"]] if probe else diagnosis["action_guidance_ko"][:4]) or [
         "GitHub Actions 작업 단계와 실패 종료 코드를 확인하세요."
     ]
     if meta["tail_window_only"]:
@@ -164,7 +182,7 @@ def inspect_run(log_root: Path, *, run_id: str, conclusion: str) -> dict[str, An
     report.update({
         "state": state, "summary_ko": summary, "selected_log": selected,
         "log_window": meta, "diagnosis": diagnosis,
-        "next_steps_ko": actions,
+        "probe_issue": probe, "next_steps_ko": actions,
     })
     # No raw paths, unredacted log text, or commands in the report.
     if len(json.dumps(report, ensure_ascii=False).encode("utf-8")) > MAX_REPORT_BYTES:
