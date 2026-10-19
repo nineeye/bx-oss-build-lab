@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from bx_build_postmortem_c0511 import inspect_run, main, PHASE_FILES
+from bx_build_postmortem_c0511 import inspect_run, main, PHASE_FILES, render_korean_report
 
 
 class PostmortemTests(unittest.TestCase):
@@ -185,6 +185,44 @@ class PostmortemTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(json.loads(dest.read_text())["selected_log"], "04_ninja_build.log")
         self.assertEqual(p.read_text(), "Permission denied")
+
+    def test_korean_text_report_readable_without_untrusted_commands(self):
+        self.put("04_ninja_build.log", "Permission denied; rm -rf everything")
+        text = render_korean_report(self.report())
+        self.assertIn("권장 확인 조치", text)
+        self.assertIn("권한", text)
+        self.assertNotIn("rm -rf", text)
+        self.assertIn("상용 출시 합격 불가", text)
+
+    def test_cli_can_create_json_and_korean_txt(self):
+        self.put("06_lld_version.log",
+                 "lld is a generic driver.\nInvoke ld.lld (Unix), ld64.lld (macOS) instead")
+        out_json = self.outdir / "report.json"
+        out_txt = self.outdir / "report.txt"
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = main(["--log-root", str(self.root / "untrusted"), "--run-id", "3",
+                       "--conclusion", "failure", "--out", str(out_json),
+                       "--text-out", str(out_txt)])
+        self.assertEqual(rc, 0)
+        self.assertIn("ld.lld --version", out_txt.read_text(encoding="utf-8"))
+        self.assertFalse(json.loads(out_json.read_text())["gate"]["stage1_pass"])
+
+    def test_text_output_cannot_overwrite_input_log(self):
+        inp = self.put("04_ninja_build.log", "Permission denied")
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc = main(["--log-root", str(self.root / "untrusted"), "--run-id", "3",
+                       "--conclusion", "failure", "--out", str(self.outdir / "report.json"),
+                       "--text-out", str(inp)])
+        self.assertEqual(rc, 2)
+        self.assertEqual(inp.read_text(), "Permission denied")
+
+    def test_text_output_cannot_alias_json(self):
+        dest = self.outdir / "report.json"
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc = main(["--log-root", str(self.root / "untrusted"), "--run-id", "3",
+                       "--conclusion", "failure", "--out", str(dest),
+                       "--text-out", str(dest)])
+        self.assertEqual(rc, 2)
 
     def test_cli_blocks_output_inside_untrusted_root(self):
         p = self.put("04_ninja_build.log", "Permission denied")
