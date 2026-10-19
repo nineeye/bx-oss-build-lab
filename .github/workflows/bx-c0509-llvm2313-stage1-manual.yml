@@ -1,0 +1,153 @@
+name: BX C0509 LLVM 23.1.3 Upstream Stage1 (Manual)
+
+# Deliberately manual-only: never execute paid compute from a push.
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: "Type I_APPROVE_C0509_PUBLIC_LLVM_BUILD to authorize upstream OSS compilation"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bx-c0509-llvm23
+  cancel-in-progress: false
+
+jobs:
+  llvm-stage1:
+    if: ${{ inputs.approval == 'I_APPROVE_C0509_PUBLIC_LLVM_BUILD' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    env:
+      ROOT: ${{ runner.temp }}/bx-c0509
+      EXPECTED_SHA256: c44186a7762ed28954be72e5ff6df9808e0779d4f1bf014ecc4e7e211d31ee34
+    steps:
+      - name: Prepare disposable build workspace and inspect resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$ROOT/out/logs" "$ROOT/src" "$ROOT/build"
+          {
+            date -u -Iseconds
+            uname -a
+            nproc
+            free -h
+            df -h "$RUNNER_TEMP"
+            cmake --version | head -1
+            ninja --version
+            clang --version | head -1
+            c++ --version | head -1
+          } 2>&1 | tee "$ROOT/out/logs/00_environment.log"
+          for tool in curl tar sha256sum cmake ninja clang clang++ file; do command -v "$tool" >/dev/null; done
+
+      - name: Download and verify LLVM 23.1.3 official source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.3/llvm-project-23.1.3.src.tar.xz"
+          curl --fail --location --retry 2 --connect-timeout 30 \
+            --output "$ROOT/src/llvm-project-23.1.3.src.tar.xz" "$url" \
+            2>&1 | tee "$ROOT/out/logs/01_download.log"
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$ROOT/src/llvm-project-23.1.3.src.tar.xz" \
+            | sha256sum -c - | tee "$ROOT/out/logs/02_source_sha256.log"
+          tar -xf "$ROOT/src/llvm-project-23.1.3.src.tar.xz" -C "$ROOT/src" --no-same-owner
+          test -f "$ROOT/src/llvm-project-23.1.3.src/llvm/CMakeLists.txt"
+          rm -- "$ROOT/src/llvm-project-23.1.3.src.tar.xz"
+          printf 'source=llvm-project-23.1.3.src.tar.xz\nsha256=%s\norigin=%s\n' \
+            "$EXPECTED_SHA256" "$url" > "$ROOT/out/SOURCE_LOCK.txt"
+
+      - name: Configure clean Clang + LLD (X86, release, no proprietary inputs)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S "$ROOT/src/llvm-project-23.1.3.src/llvm" -B "$ROOT/build" \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER="$(command -v clang)" \
+            -DCMAKE_CXX_COMPILER="$(command -v clang++)" \
+            '-DLLVM_ENABLE_PROJECTS=clang;lld' \
+            -DLLVM_TARGETS_TO_BUILD=X86 \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_INCLUDE_EXAMPLES=OFF \
+            -DLLVM_INCLUDE_BENCHMARKS=OFF \
+            -DLLVM_ENABLE_ZLIB=OFF \
+            -DLLVM_ENABLE_ZSTD=OFF \
+            -DLLVM_ENABLE_LIBXML2=OFF \
+            -DLLVM_ENABLE_ASSERTIONS=OFF \
+            -DLLVM_PARALLEL_COMPILE_JOBS=2 \
+            -DLLVM_PARALLEL_LINK_JOBS=1 \
+            2>&1 | tee "$ROOT/out/logs/03_cmake_configure.log"
+          test -s "$ROOT/build/build.ninja"
+
+      - name: Perform real bounded LLVM Clang and LLD native compilation
+        shell: bash
+        run: |
+          set -euo pipefail
+          ninja -C "$ROOT/build" -j2 clang lld \
+            2>&1 | tee "$ROOT/out/logs/04_ninja_build.log"
+
+      - name: Independent Stage1 C and C++ compile, link, execute gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLANG="$ROOT/build/bin/clang-23"
+          LLD="$ROOT/build/bin/lld"
+          test -x "$CLANG"
+          test -x "$LLD"
+          "$CLANG" --version 2>&1 | tee "$ROOT/out/logs/05_clang_version.log"
+          "$LLD" --version 2>&1 | tee "$ROOT/out/logs/06_lld_version.log"
+          "$CLANG" --version | grep -F "version 23.1.3"
+          "$LLD" --version | grep -F "23.1.3"
+          if [ ! -e "$ROOT/build/bin/ld.lld" ]; then ln -s lld "$ROOT/build/bin/ld.lld"; fi
+          file "$CLANG" "$LLD" 2>&1 | tee "$ROOT/out/logs/07_elf_types.log"
+          file "$CLANG" "$LLD" | grep -q 'ELF 64-bit'
+          cat > "$ROOT/sample.c" <<'C'
+          #include <stdio.h>
+          int main(void) { puts("BX_C0509_C_PASS"); return 0; }
+          C
+          cat > "$ROOT/sample.cpp" <<'CPP'
+          #include <string>
+          int main() { const std::string x = "BX"; return x.size() == 2 ? 0 : 2; }
+          CPP
+          export PATH="$ROOT/build/bin:$PATH"
+          "$CLANG" "$ROOT/sample.c" -fuse-ld=lld -o "$ROOT/c_sample"
+          "$ROOT/c_sample" | grep -x BX_C0509_C_PASS
+          "$CLANG" -x c++ "$ROOT/sample.cpp" -lstdc++ -fuse-ld=lld -o "$ROOT/cpp_sample"
+          "$ROOT/cpp_sample"
+          printf 'int main( {\n' > "$ROOT/bad.c"
+          if "$CLANG" "$ROOT/bad.c" -c -o "$ROOT/bad.o" > "$ROOT/out/logs/08_negative.log" 2>&1; then
+            echo 'ERROR: Invalid C source was accepted' >&2
+            exit 1
+          fi
+          if [ -e "$ROOT/bad.o" ]; then echo 'ERROR: invalid output exists' >&2; exit 1; fi
+          sha256sum "$CLANG" "$LLD" "$ROOT/c_sample" "$ROOT/cpp_sample" \
+            | tee "$ROOT/out/BINARIES_SHA256.txt"
+          printf 'upstream_linux_clang_lld_stage1=PASS\nstage2=NOT_TESTED\nwindows=NOT_TESTED\ncommercial_release=NOT_APPROVED\nrun_id=%s\n' \
+            "$GITHUB_RUN_ID" | tee "$ROOT/out/STATUS.txt"
+
+      - name: Upload small success evidence only (not commercial/private source)
+        if: success()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: bx-c0509-llvm-stage1-PASS-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/bx-c0509/out/logs/
+            ${{ runner.temp }}/bx-c0509/out/SOURCE_LOCK.txt
+            ${{ runner.temp }}/bx-c0509/out/BINARIES_SHA256.txt
+            ${{ runner.temp }}/bx-c0509/out/STATUS.txt
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Preserve failure logs separately; never label a failure PASS
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: bx-c0509-llvm-NOT-APPROVED-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/bx-c0509/out/logs/
+            ${{ runner.temp }}/bx-c0509/out/SOURCE_LOCK.txt
+          retention-days: 3
+          if-no-files-found: warn
