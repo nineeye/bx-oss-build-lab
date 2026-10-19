@@ -72,11 +72,14 @@ jobs:
           python3 tools/bx_build_postmortem_c0511.py \
             --log-root "$INPUT_ROOT" --run-id "$SOURCE_RUN_ID" \
             --conclusion "$SOURCE_CONCLUSION" \
-            --out "$OUTPUT_ROOT/C0511_AUTO_TRIAGE_REPORT.json"
+            --out "$OUTPUT_ROOT/C0511_AUTO_TRIAGE_REPORT.json" \
+            --text-out "$OUTPUT_ROOT/C0511_AUTO_TRIAGE_REPORT_KO.txt"
       - name: Save only sanitized diagnostic JSON, never raw logs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: bx-c0511-C0509-phase-diagnostic-json-only
-          path: ${{ runner.temp }}/bx-c0510-output/C0511_AUTO_TRIAGE_REPORT.json
+          path: |
+            ${{ runner.temp }}/bx-c0510-output/C0511_AUTO_TRIAGE_REPORT.json
+            ${{ runner.temp }}/bx-c0510-output/C0511_AUTO_TRIAGE_REPORT_KO.txt
           if-no-files-found: error
           retention-days: 3
