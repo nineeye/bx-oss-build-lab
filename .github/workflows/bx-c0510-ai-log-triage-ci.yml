@@ -1,0 +1,56 @@
+name: BX C0510 Offline AI Log Triage QA (No Network Dependencies)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/bx_ai_log_triage_c0510.py"
+      - "tools/test_bx_ai_log_triage_c0510.py"
+      - ".github/workflows/bx-c0510-ai-log-triage-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bx-c0510-log-triage
+  cancel-in-progress: false
+
+jobs:
+  safe-unittest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Runtime and scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 --version
+          test -f tools/bx_ai_log_triage_c0510.py
+          test -f tools/test_bx_ai_log_triage_c0510.py
+      - name: Python syntax and focused regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/bx_ai_log_triage_c0510.py tools/test_bx_ai_log_triage_c0510.py
+          python3 -m unittest discover -s tools -p 'test_bx_ai_log_triage_c0510.py' -v
+      - name: Real CLI JSON smoke with synthetic, nonprivate build log
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bx-c0510"
+          printf 'ld.lld: error: undefined symbol: demo_missing\n' > "$RUNNER_TEMP/bx-c0510/build.log"
+          python3 tools/bx_ai_log_triage_c0510.py \
+            --log "$RUNNER_TEMP/bx-c0510/build.log" --exit-code 1 \
+            --out "$RUNNER_TEMP/bx-c0510/result.json"
+          python3 - "$RUNNER_TEMP/bx-c0510/result.json" <<'PY'
+          import json, sys
+          p = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert p["classification"] == "failed", p
+          assert p["evidence"][0]["category"] == "undefined_symbol", p
+          assert p["gate"]["release_approved"] is False, p
+          print("C0510 real CLI smoke and independent safety gate: PASS")
+          PY
