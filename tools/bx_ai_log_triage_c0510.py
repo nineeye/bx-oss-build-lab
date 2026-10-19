@@ -131,7 +131,7 @@ def validate_ai_proposal(proposal: dict[str, Any], evidence: list[dict[str, Any]
     category, line, action, summary = (proposal[k] for k in ("category", "line", "action_id", "summary_ko"))
     if not isinstance(category, str) or not isinstance(line, int) or isinstance(line, bool):
         return rejected
-    if action not in ACTIONS or not isinstance(summary, str) or not 1 <= len(summary) <= 200:
+    if not isinstance(action, str) or action not in ACTIONS or not isinstance(summary, str) or not 1 <= len(summary) <= 200:
         return rejected
     if any(ch in summary for ch in ("\n", "\r", "\x00", "\t")):
         return rejected
