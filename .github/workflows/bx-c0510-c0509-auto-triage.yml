@@ -1,4 +1,4 @@
-name: BX C0510 C0509 Build Completion Auto-Triage
+name: BX C0511 C0509 Build Completion Auto-Triage
 
 on:
   workflow_run:
@@ -33,6 +33,7 @@ jobs:
           set -euo pipefail
           python3 -m py_compile tools/bx_ai_log_triage_c0510.py
           python3 -m unittest discover -s tools -p 'test_bx_ai_log_triage_c0510.py' -q
+          python3 -m unittest discover -s tools -p 'test_bx_build_postmortem_c0511.py' -q
 
   after-llvm:
     if: >-
@@ -59,7 +60,7 @@ jobs:
           else
             printf 'C0509 run artifacts missing; report must explicitly say unavailable\n'
           fi
-      - name: Run evidence-only analysis; no execution from log contents
+      - name: C0511 phase-aware, evidence-only diagnosis (never execute logs)
         shell: bash
         env:
           INPUT_ROOT: ${{ runner.temp }}/bx-c0510-input
@@ -68,61 +69,14 @@ jobs:
           SOURCE_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import json, os
-          from pathlib import Path
-          import sys
-          sys.path.insert(0, str(Path("tools").resolve()))
-          from bx_ai_log_triage_c0510 import parse_log
-
-          root = Path(os.environ["INPUT_ROOT"])
-          out = Path(os.environ["OUTPUT_ROOT"])
-          candidates = [x for x in root.rglob("04_ninja_build.log")
-                        if x.is_file() and not x.is_symlink()]
-          candidates.sort(key=lambda x: (x.stat().st_size, str(x)), reverse=True)
-          conclusion = os.environ["SOURCE_CONCLUSION"]
-          source_id = os.environ["SOURCE_RUN_ID"]
-          code = 0 if conclusion == "success" else 124 if conclusion in ("cancelled", "timed_out") else 1
-          if not candidates:
-              report = {
-                  "schema": "BX_C0510_AUTO_TRIAGE_V1",
-                  "state": "log_unavailable",
-                  "source_run_id": source_id,
-                  "source_conclusion": conclusion,
-                  "reason": "No original Ninja build log artifact found",
-                  "gate": {"release_approved": False,
-                           "stage1_pass": False,
-                           "windows_pass": False}
-              }
-          else:
-              candidate = candidates[0]
-              size = candidate.stat().st_size
-              cap = 2_500_000
-              with candidate.open("rb") as f:
-                  if size > cap:
-                      f.seek(size - cap)
-                  content = f.read(cap).decode("utf-8", "replace")
-              report = parse_log(content, exit_code=code)
-              report["source"] = {
-                  "run_id": source_id,
-                  "run_conclusion": conclusion,
-                  "log_size_bytes": size,
-                  "log_tail_only": size > cap,
-                  "source_log": "04_ninja_build.log"
-              }
-              report["gate"]["stage1_pass"] = False
-              report["gate"]["release_approved"] = False
-          out.mkdir(parents=True, exist_ok=True)
-          path = out / "C0510_AUTO_TRIAGE_REPORT.json"
-          path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n",
-                          encoding="utf-8")
-          print("Status:", report.get("classification", report.get("state")))
-          print("Report:", path)
-          PY
+          python3 tools/bx_build_postmortem_c0511.py \
+            --log-root "$INPUT_ROOT" --run-id "$SOURCE_RUN_ID" \
+            --conclusion "$SOURCE_CONCLUSION" \
+            --out "$OUTPUT_ROOT/C0511_AUTO_TRIAGE_REPORT.json"
       - name: Save only sanitized diagnostic JSON, never raw logs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: bx-c0510-C0509-diagnostic-json-only
-          path: ${{ runner.temp }}/bx-c0510-output/C0510_AUTO_TRIAGE_REPORT.json
+          name: bx-c0511-C0509-phase-diagnostic-json-only
+          path: ${{ runner.temp }}/bx-c0510-output/C0511_AUTO_TRIAGE_REPORT.json
           if-no-files-found: error
           retention-days: 3
