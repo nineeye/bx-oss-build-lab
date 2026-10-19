@@ -21,11 +21,12 @@ Run: https://github.com/nineeye/bx-oss-build-lab/actions/runs/39228587580
 - Tail-only reading declares when original absolute line numbers are unknown; rejects unsafe symlinks and excessive candidate files.
 - Never runs shell commands from logs or model output, does not repair files automatically, redacts credentials from returned excerpts, and keeps all native/customer release gates false.
 - tools/test_bx_build_postmortem_c0511.py exercises synthetic, malicious and real-failure-like inputs.
+- C0511 now also creates a concise Korean TXT report (--text-out) with error phase and manual remediation, omitting untrusted raw log lines and shell directives. Completion automation uploads sanitized JSON and Korean TXT only.
 - The prior optional C0510 llama.cpp local-AI bridge is preserved unchanged. No real Qwen inference was run on GitHub.
 
 ## Verified tests and actual evidence
-- C0511 32/32 and prior C0510 49/49 regression + CLI smoke PASS:
-  https://github.com/nineeye/bx-oss-build-lab/actions/runs/39233393964
+- C0511 36/36 and prior C0510 49/49 regression + CLI smoke PASS:
+  https://github.com/nineeye/bx-oss-build-lab/actions/runs/39234223122
 - Actual C0509 failure artifact was downloaded and classified without recompiling:
   https://github.com/nineeye/bx-oss-build-lab/actions/runs/39233543676
 - Old C0510 after-completion workflow ran successfully for the failed C0509:
