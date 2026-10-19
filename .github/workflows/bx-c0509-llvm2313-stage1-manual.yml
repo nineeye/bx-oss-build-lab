@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 330
     env:
-      ROOT: ${{ runner.temp }}/bx-c0509
+      ROOT: ${{ github.workspace }}/.bx-c0509
       EXPECTED_SHA256: c44186a7762ed28954be72e5ff6df9808e0779d4f1bf014ecc4e7e211d31ee34
     steps:
       - name: Prepare disposable build workspace and inspect resources
@@ -134,10 +134,10 @@ jobs:
         with:
           name: bx-c0509-llvm-stage1-PASS-${{ github.run_id }}
           path: |
-            ${{ runner.temp }}/bx-c0509/out/logs/
-            ${{ runner.temp }}/bx-c0509/out/SOURCE_LOCK.txt
-            ${{ runner.temp }}/bx-c0509/out/BINARIES_SHA256.txt
-            ${{ runner.temp }}/bx-c0509/out/STATUS.txt
+            ${{ github.workspace }}/.bx-c0509/out/logs/
+            ${{ github.workspace }}/.bx-c0509/out/SOURCE_LOCK.txt
+            ${{ github.workspace }}/.bx-c0509/out/BINARIES_SHA256.txt
+            ${{ github.workspace }}/.bx-c0509/out/STATUS.txt
           retention-days: 3
           if-no-files-found: error
 
@@ -147,7 +147,7 @@ jobs:
         with:
           name: bx-c0509-llvm-NOT-APPROVED-${{ github.run_id }}
           path: |
-            ${{ runner.temp }}/bx-c0509/out/logs/
-            ${{ runner.temp }}/bx-c0509/out/SOURCE_LOCK.txt
+            ${{ github.workspace }}/.bx-c0509/out/logs/
+            ${{ github.workspace }}/.bx-c0509/out/SOURCE_LOCK.txt
           retention-days: 3
           if-no-files-found: warn
