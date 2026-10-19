@@ -6,6 +6,8 @@ on:
     paths:
       - "tools/bx_ai_log_triage_c0510.py"
       - "tools/test_bx_ai_log_triage_c0510.py"
+      - "tools/bx_local_ai_bridge_c0510.py"
+      - "tools/test_bx_local_ai_bridge_c0510.py"
       - ".github/workflows/bx-c0510-ai-log-triage-ci.yml"
   workflow_dispatch:
 
@@ -31,12 +33,14 @@ jobs:
           python3 --version
           test -f tools/bx_ai_log_triage_c0510.py
           test -f tools/test_bx_ai_log_triage_c0510.py
+          test -f tools/bx_local_ai_bridge_c0510.py
+          test -f tools/test_bx_local_ai_bridge_c0510.py
       - name: Python syntax and focused regression tests
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile tools/bx_ai_log_triage_c0510.py tools/test_bx_ai_log_triage_c0510.py
-          python3 -m unittest discover -s tools -p 'test_bx_ai_log_triage_c0510.py' -v
+          python3 -m py_compile tools/*c0510.py
+          python3 -m unittest discover -s tools -p 'test_*c0510.py' -v
       - name: Real CLI JSON smoke with synthetic, nonprivate build log
         shell: bash
         run: |
