@@ -1,0 +1,52 @@
+name: BX C0511 Phase-Aware Postbuild Diagnosis QA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/bx_build_postmortem_c0511.py"
+      - "tools/test_bx_build_postmortem_c0511.py"
+      - ".github/workflows/bx-c0511-postbuild-diagnosis-qa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bx-c0511-safe-diagnosis
+  cancel-in-progress: false
+
+jobs:
+  focused-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compile parser and run independent regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/bx_ai_log_triage_c0510.py tools/bx_build_postmortem_c0511.py
+          python3 -m unittest discover -s tools -p 'test_bx_build_postmortem_c0511.py' -v
+          python3 -m unittest discover -s tools -p 'test_*c0510.py' -q
+      - name: CLI smoke and zero-certification gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/logs-for-test/artifact/logs" "$RUNNER_TEMP/report"
+          printf 'ld.lld: error: undefined symbol: public_fixture\n' > "$RUNNER_TEMP/logs-for-test/artifact/logs/04_ninja_build.log"
+          python3 tools/bx_build_postmortem_c0511.py \
+            --log-root "$RUNNER_TEMP/logs-for-test" \
+            --run-id 39228587580 --conclusion failure \
+            --out "$RUNNER_TEMP/report/result.json"
+          python3 - "$RUNNER_TEMP/report/result.json" <<'PY'
+          import json, sys
+          a = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert a["state"] == "workflow_failed_needs_review"
+          assert a["diagnosis"]["evidence"][0]["category"] == "undefined_symbol"
+          assert a["gate"]["stage1_pass"] is False
+          assert a["gate"]["release_approved"] is False
+          print("C0511 CLI smoke + independent no-PASS gate: PASS")
+          PY
