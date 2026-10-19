@@ -190,12 +190,50 @@ def inspect_run(log_root: Path, *, run_id: str, conclusion: str) -> dict[str, An
     return report
 
 
+
+def render_korean_report(report: dict[str, Any]) -> str:
+    """Short, non-executable Korean report without raw attacker-controlled excerpts."""
+    if report.get("schema") != "BX_C0511_POSTBUILD_TRIAGE_V1":
+        raise ValueError("Invalid C0511 report schema")
+    lines = [
+        "BX PRO 빌드 자동진단 결과",
+        "=======================",
+        "원본 GitHub 실행 ID: " + str(report["source_run_id"]),
+        "원본 실행 결과: " + report["source_conclusion"],
+        "진단 상태: " + report["state"],
+        "문제 요약: " + report["summary_ko"],
+        "분석 대상 단계: " + (report.get("selected_log") or "원본 로그 없음"),
+    ]
+    window = report.get("log_window")
+    if window and window.get("tail_window_only"):
+        lines.append("주의: 큰 로그의 마지막 일부만 검사했습니다. 행 번호는 추출 구간 기준입니다.")
+    issue = report.get("probe_issue")
+    if issue:
+        lines.append("실제 로그와 일치한 문제: " + issue["category"])
+        lines.append("근거 위치: 선택 로그의 " + str(issue["line"]) + "번째 행")
+    elif report.get("diagnosis") and report["diagnosis"]["evidence"]:
+        ev = report["diagnosis"]["evidence"][0]
+        lines.append("발견된 오류 유형: " + ev["category"])
+        lines.append("근거 위치: 선택 로그의 " + str(ev["line"]) + "번째 행")
+    lines.append("권장 확인 조치:")
+    for i, action in enumerate(report.get("next_steps_ko", [])[:5], 1):
+        # These instructions come from the fixed, trusted rule dictionary.
+        lines.append(f"  {i}. {action}")
+    lines.extend([
+        "안전 판정: AI/로그 진단만으로 Clang Stage1, Stage2, Windows, 상용 출시 합격 불가",
+        "고객 소스 자동 수정: 실행하지 않음",
+        "원본 로그 명령 실행: 실행하지 않음",
+        "",
+    ])
+    return "\n".join(lines)
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="BX C0511: 빌드 완료 후 안전한 한국어 자동진단")
     parser.add_argument("--log-root", required=True, type=Path)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--conclusion", required=True)
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--text-out", type=Path, help="Optional safe Korean TXT summary")
     args = parser.parse_args(argv)
     try:
         out = args.out
@@ -206,11 +244,23 @@ def main(argv: list[str] | None = None) -> int:
         tmp = out.with_name(out.name + ".tmp")
         if tmp.is_symlink():
             raise ValueError("Temporary output symlink blocked")
+        txt = args.text_out
+        if txt is not None:
+            if (not txt.is_absolute() or txt.is_symlink() or
+                    not txt.parent.is_dir() or txt.resolve() == out.resolve()
+                    or txt.resolve().is_relative_to(args.log_root.resolve())):
+                raise ValueError("Text report path must be outside logs, distinct and safe")
+            if txt.with_name(txt.name + ".tmp").is_symlink():
+                raise ValueError("Temporary text report symlink blocked")
         data = inspect_run(args.log_root, run_id=args.run_id,
                            conclusion=args.conclusion)
         serialized = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
         tmp.write_text(serialized, encoding="utf-8")
         os.replace(tmp, out)
+        if txt is not None:
+            ttemp = txt.with_name(txt.name + ".tmp")
+            ttemp.write_text(render_korean_report(data), encoding="utf-8")
+            os.replace(ttemp, txt)
         print(data["state"], "-", data["summary_ko"])
         return 0
     except (OSError, ValueError, TypeError) as exc:
