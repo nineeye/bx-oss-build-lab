@@ -58,6 +58,21 @@ class PostmortemTests(unittest.TestCase):
         self.assertEqual(r["selected_log"], "04_ninja_build.log")
         self.assertEqual(r["diagnosis"]["evidence"][0]["category"], "undefined_symbol")
 
+    def test_real_c0509_generic_lld_driver_probe(self):
+        self.put("04_ninja_build.log", "[3425/3425] Creating executable symlink bin/clang")
+        self.put("05_clang_version.log", "clang version 23.1.3")
+        self.put("06_lld_version.log", "lld is a generic driver.\nInvoke ld.lld (Unix), ld64.lld (macOS) instead")
+        r = self.report()
+        self.assertEqual(r["selected_log"], "06_lld_version.log")
+        self.assertEqual(r["probe_issue"]["category"], "wrong_lld_driver_probe")
+        self.assertIn("ld.lld --version", r["next_steps_ko"][0])
+        self.assertFalse(r["gate"]["stage1_pass"])
+
+    def test_only_complete_generic_lld_hint_triggers_probe(self):
+        self.put("06_lld_version.log", "lld is a generic driver.")
+        r = self.report()
+        self.assertIsNone(r["probe_issue"])
+
     def test_cmake_error_wins_clean_ninja(self):
         self.put("03_cmake_configure.log", "CMake Error at CMakeLists.txt:7")
         self.put("04_ninja_build.log", "[100/100] Building")
