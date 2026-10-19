@@ -1,0 +1,57 @@
+name: BX C0511 Recheck Historic C0509 Failure Evidence
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/bx-c0511-c0509-real-case-backfill.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  offline-postmortem:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download public original C0509 artifacts only
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bx0511-input" "$RUNNER_TEMP/bx0511-output"
+          gh run download 39228587580 -R "$GITHUB_REPOSITORY" \
+            -D "$RUNNER_TEMP/bx0511-input"
+      - name: Grounded phase-aware diagnosis of real failed test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/bx_build_postmortem_c0511.py \
+            --log-root "$RUNNER_TEMP/bx0511-input" \
+            --run-id 39228587580 \
+            --conclusion failure \
+            --out "$RUNNER_TEMP/bx0511-output/C0511_REAL_FAILURE_DIAGNOSIS.json"
+          python3 - "$RUNNER_TEMP/bx0511-output/C0511_REAL_FAILURE_DIAGNOSIS.json" <<'PY'
+          import json,sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              report=json.load(f)
+          assert report["selected_log"]=="06_lld_version.log", report["selected_log"]
+          assert report["probe_issue"]["category"]=="wrong_lld_driver_probe", report["probe_issue"]
+          assert report["gate"]["stage1_pass"] is False
+          assert report["gate"]["release_approved"] is False
+          print("REAL C0509 log cause identified without rebuilding LLVM: PASS")
+          PY
+      - name: Publish sanitized JSON result only
+        if: success()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: bx-c0511-real-c0509-postmortem
+          path: ${{ runner.temp }}/bx0511-output/C0511_REAL_FAILURE_DIAGNOSIS.json
+          retention-days: 3
+          if-no-files-found: error
