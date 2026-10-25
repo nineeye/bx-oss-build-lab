@@ -1,0 +1,37 @@
+# Owner-authorized public upstream OSS smoke, no customer or proprietary source.
+name: Ansim C442 Free Windows Restic Kopia Native Restore
+on:
+  push:
+    branches:
+      - ansim-free/c442-win-synthetic-preflight
+    paths:
+      - public_samples/ansim_c442/restic_kopia_native_synthetic.ps1
+      - .github/workflows/ansim-c442-public-oss-windows.yml
+  workflow_dispatch:
+    inputs:
+      approval:
+        type: string
+        required: true
+        description: Type I_APPROVE_ANSIM_C442_PUBLIC_OSS
+permissions:
+  contents: read
+concurrency:
+  group: ansim-c442-upstream-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  restic-kopia-native:
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' && github.actor == 'nineeye' && (github.event_name == 'push' || inputs.approval == 'I_APPROVE_ANSIM_C442_PUBLIC_OSS') }}
+    runs-on: windows-2025
+    timeout-minutes: 14
+    steps:
+      - name: Checkout only public source harness
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Exact SHA-256 verified official Windows restic and Kopia restore
+        shell: pwsh
+        timeout-minutes: 12
+        run: |
+          & pwsh -NoProfile -File public_samples/ansim_c442/restic_kopia_native_synthetic.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+# Only text receipts in workflow logs; no uploaded artifacts or private assets.
