@@ -15,7 +15,7 @@ function Check-Tool([string]$exe,[string[]]$arguments,[bool]$expectError=$false)
     if ($status -ne 0) {
       $safe = $output.Replace($root,'[RUNNER_TEMP]')
       $safe = $safe.Replace($env:USERPROFILE,'[RUNNER_HOME]')
-      $safe = ($safe -replace '[\\r\\n]+',' ').Trim()
+      $safe = ($safe -replace '[\r\n]+',' ').Trim()
       if ($safe.Length -gt 450) { $safe=$safe.Substring(0,450) }
       Write-Host ('OFFICIAL_NATIVE_COMMAND_FAILED exit=' + $status + ' detail=' + $safe)
       throw ('NATIVE_EXIT_' + $status)
@@ -100,7 +100,7 @@ try {
   $kopiaBin=Join-Path $root 'kopia_bin'
   Expand-Archive -LiteralPath $kopiaZip -DestinationPath $kopiaBin
   $kopia=Join-Path $kopiaBin 'kopia-0.23.1-windows-x64\kopia.exe'
-  $common=@('--disable-file-logging','--no-use-keyring','--no-persist-credentials','--no-progress')
+  # Public baseline deliberately avoids optional flags rejected by this official Windows CLI.\n  # Product CLI flag compatibility remains a separate unresolved issue.\n  $common=@()
   Test-Case 'KOPIA_VERSION_WINDOWS' {
     Assert-True (Test-Path -LiteralPath $kopia -PathType Leaf) 'KOPIA_EXE_MISSING'
     $version=Check-Tool $kopia @('--version')
