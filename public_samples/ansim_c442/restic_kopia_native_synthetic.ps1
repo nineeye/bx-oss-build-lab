@@ -100,7 +100,9 @@ try {
   $kopiaBin=Join-Path $root 'kopia_bin'
   Expand-Archive -LiteralPath $kopiaZip -DestinationPath $kopiaBin
   $kopia=Join-Path $kopiaBin 'kopia-0.23.1-windows-x64\kopia.exe'
-  # Public baseline deliberately avoids optional flags rejected by this official Windows CLI.\n  # Product CLI flag compatibility remains a separate unresolved issue.\n  $common=@()
+  # Public baseline deliberately avoids optional flags rejected by this official Windows CLI.
+  # Product CLI flag compatibility remains a separate unresolved issue.
+  $common=@()
   Test-Case 'KOPIA_VERSION_WINDOWS' {
     Assert-True (Test-Path -LiteralPath $kopia -PathType Leaf) 'KOPIA_EXE_MISSING'
     $version=Check-Tool $kopia @('--version')
