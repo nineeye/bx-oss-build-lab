@@ -8,7 +8,8 @@ $cases = [System.Collections.Generic.List[object]]::new()
 New-Item -ItemType Directory -Force -Path $root | Out-Null
 function Assert-True([bool]$ok,[string]$message) { if (-not $ok) { throw $message } }
 function Check-Tool([string]$exe,[string[]]$arguments,[bool]$expectError=$false) {
-  $output = (& $exe @arguments 2>&1 | Out-String).Trim()
+  # Kopia --json must parse STDOUT only; diagnostic STDERR is not JSON.
+  $output = (& $exe @arguments 2>$null | Out-String).Trim()
   $status = $LASTEXITCODE
   if ($expectError) { Assert-True ($status -ne 0) 'NEGATIVE_TEST_ACCEPTED' }
   else {
