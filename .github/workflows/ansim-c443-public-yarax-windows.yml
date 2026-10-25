@@ -1,0 +1,55 @@
+# Public official YARA-X 1.21.0 Windows wheel, no proprietary Ansim source or samples.
+name: Ansim C443 Public Free Windows YARA-X Native
+on:
+  push:
+    branches: ['ansim-free/c443-yarax-native']
+    paths:
+      - 'public_samples/ansim_c443/**'
+      - '.github/workflows/ansim-c443-public-yarax-windows.yml'
+  workflow_dispatch:
+    inputs:
+      approval:
+        required: true
+        type: string
+        description: 'Type I_APPROVE_ANSIM_C443_PUBLIC_YARAX'
+permissions:
+  contents: read
+concurrency:
+  group: ansim-c443-yarax-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  official-native-yarax:
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' && github.actor == 'nineeye' && (github.event_name == 'push' || inputs.approval == 'I_APPROVE_ANSIM_C443_PUBLIC_YARAX') }}
+    runs-on: windows-2025
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Obtain exact official wheel and verify SHA before loading native DLL
+        shell: pwsh
+        timeout-minutes: 6
+        run: |
+          $ErrorActionPreference='Stop'
+          $wheelDir=Join-Path $env:RUNNER_TEMP 'ansim-c443-wheel'
+          New-Item -ItemType Directory -Force -Path $wheelDir | Out-Null
+          python -m pip download --disable-pip-version-check --no-deps --only-binary=:all: --dest $wheelDir 'yara-x==1.21.0'
+          if ($LASTEXITCODE -ne 0) { throw 'OFFICIAL_WHEEL_DOWNLOAD_FAILED' }
+          $files=@(Get-ChildItem -LiteralPath $wheelDir -File)
+          if ($files.Count -ne 1 -or $files[0].Name -cne 'yara_x-1.21.0-cp38-abi3-win_amd64.whl') { throw 'OFFICIAL_WHEEL_FILENAME_MISMATCH' }
+          $actual=(Get-FileHash -LiteralPath $files[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne '04be37c92bbbcba4065a4cf0f0029c0b0bf3e7c68f3c35b4cf523300e534cf58') { throw 'OFFICIAL_WHEEL_SHA_MISMATCH' }
+          Write-Host ('C443_OFFICIAL_WINDOWS_YARAX_WHEEL_SHA_PASS '+$actual)
+          python -m pip install --no-index --no-deps --find-links $wheelDir 'yara-x==1.21.0'
+          if ($LASTEXITCODE -ne 0) { throw 'OFFLINE_WHEEL_INSTALL_FAILED' }
+      - name: Native YARA-X scanner positives, negatives and unicode files
+        shell: pwsh
+        timeout-minutes: 4
+        run: |
+          python public_samples/ansim_c443/windows_yarax_oss.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+# No binary artifacts uploaded, no private assets, only native logs and bounded run.
