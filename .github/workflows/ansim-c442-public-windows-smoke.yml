@@ -1,0 +1,38 @@
+# Owner-approved 2026-10-25: PUBLIC SYNTHETIC ONLY, no proprietary binaries,
+# no product files, no uploaded artifacts or billed large runners.
+name: Ansim C442 Public Free Windows Synthetic Smoke
+on:
+  push:
+    branches:
+      - ansim-free/c442-win-synthetic-preflight
+    paths:
+      - public_samples/ansim_c442/**
+      - .github/workflows/ansim-c442-public-windows-smoke.yml
+  workflow_dispatch:
+    inputs:
+      approval:
+        type: string
+        required: true
+        description: Type I_APPROVE_ANSIM_C442_PUBLIC_SYNTHETIC
+permissions:
+  contents: read
+concurrency:
+  group: ansim-c442-public-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  windows-public-synthetic:
+    if: ${{ github.event.repository.private == false && github.repository == 'nineeye/bx-oss-build-lab' && github.actor == 'nineeye' && (github.event_name == 'push' || inputs.approval == 'I_APPROVE_ANSIM_C442_PUBLIC_SYNTHETIC') }}
+    runs-on: windows-2025
+    timeout-minutes: 8
+    steps:
+      - name: Checkout read-only public test code only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Native Windows synthetic filesystem process timeout integrity
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          & pwsh -NoProfile -File public_samples/ansim_c442/windows_synthetic_preflight.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+# Logs contain run-bound receipt; no uploaded artifacts or private software.
