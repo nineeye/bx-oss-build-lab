@@ -11,7 +11,16 @@ function Check-Tool([string]$exe,[string[]]$arguments,[bool]$expectError=$false)
   $output = (& $exe @arguments 2>&1 | Out-String).Trim()
   $status = $LASTEXITCODE
   if ($expectError) { Assert-True ($status -ne 0) 'NEGATIVE_TEST_ACCEPTED' }
-  else { Assert-True ($status -eq 0) ('NATIVE_EXIT_' + $status) }
+  else {
+    if ($status -ne 0) {
+      $safe = $output.Replace($root,'[RUNNER_TEMP]')
+      $safe = $safe.Replace($env:USERPROFILE,'[RUNNER_HOME]')
+      $safe = ($safe -replace '[\\r\\n]+',' ').Trim()
+      if ($safe.Length -gt 450) { $safe=$safe.Substring(0,450) }
+      Write-Host ('OFFICIAL_NATIVE_COMMAND_FAILED exit=' + $status + ' detail=' + $safe)
+      throw ('NATIVE_EXIT_' + $status)
+    }
+  }
   return $output
 }
 function Test-Case([string]$label,[scriptblock]$action) {
